@@ -13,6 +13,8 @@ export const JWT_ISSUER = 'wolfcar-api';
 export type AccessAudience = 'dashboard' | 'showroom';
 const CHALLENGE_AUDIENCE = '2fa-challenge';
 const SLOTS_AUDIENCE = 'slots';
+/** Website customers (online checkout); see signCustomer. */
+export const CUSTOMER_AUDIENCE = 'customer';
 /** How long a phone stays unlocked on the sales slots page. */
 export const SLOTS_TTL_DAYS = 90;
 
@@ -63,6 +65,20 @@ export class TokenService {
 
   async verifyAccess(token: string): Promise<AccessPayload> {
     return this.jwt.verifyAsync<AccessPayload>(token, { audience: ['dashboard', 'showroom'] });
+  }
+
+  /**
+   * The website customer's cookie token: sub = customer id, ver = the
+   * customer's sessionVersion (a bump signs every device out), valid
+   * CUSTOMER_SESSION_TTL_DAYS. Implemented in Task 4 of the online-checkout plan.
+   */
+  signCustomer(customerId: string, version: number): Promise<{ token: string; expiresAt: Date }> {
+    throw new Error(`TODO(phase1): TokenService.signCustomer ${customerId} ${version}`);
+  }
+
+  /** Throws AuthFailedException('SESSION_EXPIRED') for anything but a valid customer token. */
+  verifyCustomer(token: string): Promise<{ sub: string; ver: number }> {
+    throw new Error(`TODO(phase1): TokenService.verifyCustomer ${token.length}`);
   }
 
   /** Short-lived token proving the password step succeeded; exchanged for a session after TOTP. */
