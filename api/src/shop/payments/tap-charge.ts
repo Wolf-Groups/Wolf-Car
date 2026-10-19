@@ -33,7 +33,7 @@ export function formatTapAmount(amount: number | string, currency = 'QAR'): stri
   return todo('formatTapAmount', amount, currency);
 }
 
-/** True when Tap's numeric amount, formatted for the currency, equals the order's "1234.50". */
-export function sameAmount(chargeAmount: number, orderTotal: string, currency = 'QAR'): boolean {
-  return todo('sameAmount', chargeAmount, orderTotal, currency);
+/** True when formatTapAmount(chargeAmount) (QAR, two decimals) equals the order's "1234.50". */
+export function sameAmount(chargeAmount: number, orderTotal: string): boolean {
+  return todo('sameAmount', chargeAmount, orderTotal);
 }

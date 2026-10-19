@@ -38,7 +38,7 @@ export class CheckoutService {
     return todo('CheckoutService.get', customer, id);
   }
 
-  /** Cancels an unpaid PENDING order with no captured attempt; 409 ORDER_NOT_CANCELLABLE otherwise. */
+  /** Cancels an unpaid PENDING order with no captured attempt. 404 for anyone else's order; 409 ORDER_NOT_CANCELLABLE when it is not cancellable. */
   cancelUnpaid(customer: CustomerPrincipal, id: string): Promise<WebOrderView> {
     return todo('CheckoutService.cancelUnpaid', customer, id);
   }

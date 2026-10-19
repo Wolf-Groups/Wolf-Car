@@ -82,6 +82,7 @@ Odoo with the Tap reference on it.
 | Unpaid orders | Expire 30 minutes after creation, unless a card attempt is in flight (started in the last 15 minutes) | Claude's call |
 | Cancelling a web order that has a captured charge | Refunds the charge through Tap's refund API first; the cancel happens only when the refund succeeded | Claude's call |
 | Staff and web orders | Staff cannot edit or confirm a web order; it is confirmed by payment. Unpaid ones are listed with an *awaiting payment* badge and vanish on expiry | Claude's call (after the builder check) |
+| Charged twice (two tabs) | The second capture is recorded as `DUPLICATE_CAPTURE`, the order is left alone, the dashboard flags it, and staff refund that charge in Tap's dashboard. Payment attempts are not blocked while another is in flight, so a customer who abandoned a 3-D Secure page is never locked out | Claude's call (after the consistency check) |
 | Collection | A paid web order gets a *Collected* button for the cashier (`collectedAt`), so the branch can tell waiting from handed over | Claude's call (after the builder check) |
 | Receipt | No email is sent in phase 1. The confirmation page shows the order code; the cashier prints the existing PDF receipt at pickup. Email is still collected because Tap requires it on the charge and Odoo wants it on the partner | Claude's call (after the builder check) |
 | SMS provider | Not chosen. The code is written against a one-method interface; a console sender is used in development and tests | open, owner |
@@ -229,8 +230,8 @@ last charge object, JSON, card number never present because Tap sends only
 
 `POST /api/shop/payments/tap/webhook` (public, no cookie):
 
-1. Read the raw body and the `hashstring` header. Recompute the HMAC with
-   `TAP_SECRET_KEY`; a mismatch is a 401 and an audit `FAILURE`.
+1. Read the parsed charge and the `hashstring` header. Recompute the HMAC
+   over Tap's hashstring fields (not the raw body) with `TAP_SECRET_KEY`; a mismatch is a 401 and an audit `FAILURE`.
 2. Find the `Payment` by `charge.id`; unknown ids are a 404 (logged).
 3. **Settle** (one function shared with the reconcile path, inside one
    transaction with the order row locked): if the charge is `CAPTURED`, check
@@ -350,7 +351,7 @@ line with a *Retry* button for those who may.
 ### Configuration
 
 API (`api/.env`, validated at start; all optional so the API still starts
-without payments, in which case `/api/shop/*` answers `CHECKOUT_UNAVAILABLE`):
+without payments, in which case creating, paying and reconciling an order and the webhook answer `CHECKOUT_UNAVAILABLE`; sign-in still works):
 
 | Variable | Purpose |
 |---|---|
@@ -372,7 +373,7 @@ Web: `NEXT_PUBLIC_TAP_PUBLIC_KEY` (`pk_test_…`), read at build time.
 ### Security notes
 
 - Card data never reaches our servers; the token does. PCI scope stays SAQ-A.
-- Webhook: HMAC check first, raw body, constant-time compare; the amount and
+- Webhook: HMAC check first (over Tap's hashstring fields of the parsed charge), constant-time compare; the amount and
   currency are compared to the order, not trusted.
 - The OTP endpoints carry `@AuthThrottle()`; the per-phone limit is on top.
   Codes are stored hashed and compared in constant time.
@@ -394,19 +395,21 @@ Web: `NEXT_PUBLIC_TAP_PUBLIC_KEY` (`pk_test_…`), read at build time.
   `orders.service.spec.ts` does; Tap client request shapes against a fake
   `fetch`; Odoo sale-order value mapping; outbox backoff schedule; expiry
   sweep selection.
-- **API e2e**: `shop-checkout.e2e-spec.ts` with `PAYMENTS_PROVIDER=fake` and
-  the console SMS sender: the whole path including a webhook the test signs
-  with the test secret, the wrong-signature and wrong-amount cases, expiry,
-  the cashier's view, Super Admin cancel with refund, the outbox against a
-  fake Odoo writer. New routes added to `rbac-matrix` and the audit-coverage
-  skip list stays as it is.
+- **API e2e** (`PAYMENTS_PROVIDER=fake` and the console SMS sender, set in
+  `api/test/setup/test-env.ts`): `shop-auth` (sign-in), `shop-checkout` (orders,
+  payment, signed webhooks including wrong signature and wrong amount, expiry),
+  `orders` (the cashier's view, collect, Super Admin and cashier cancel with
+  refund), `odoo-outbox` (against a fake Odoo writer). New routes are added to
+  `rbac-matrix`; the audit-coverage skip list stays as it is.
 - **Web (Vitest)**: phone input normalisation, the checkout reducer, the OTP
   step (resend timer, wrong code), the Tap card wrapper with a stubbed
-  `window.CardSDK`, the cart drawer's new button, the orders page badge.
-- **Playwright**: `checkout.spec.ts`, fake provider: basket → phone → code
-  (read from the API's console-sender endpoint available only in
-  `NODE_ENV=test`) → details → pay (the fake SDK stub injected by the test)
-  → signed webhook → confirmation; and the cashier sees it.
+  `window.CardSDK`, the return page's states, the cart drawer's new button, the
+  orders page and detail sheet for web orders.
+- **Playwright**: `checkout.spec.ts`, fake provider, API run as production with
+  `OTP_DEV_CODE_IN_RESPONSE=true`: basket → phone → code (read from the
+  `devCode` field of the `/otp` answer) → details → pay (the fake SDK stub
+  injected by the test) → return page confirms through reconcile → the
+  cashier sees it.
 
 ## What is left to the builder
 

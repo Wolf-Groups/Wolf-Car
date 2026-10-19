@@ -30,7 +30,16 @@ function makeOrder(overrides: Partial<OrderDetail> = {}): OrderDetail {
     code: "GH-000042",
     number: 42,
     status: "PENDING",
+    source: "SHOWROOM",
+    paymentStatus: "NONE",
+    paidAt: null,
+    collectedAt: null,
     customerName: "Sara Ali",
+    customerPhone: null,
+    customerEmail: null,
+    collectedBy: null,
+    payment: null,
+    odoo: null,
     total: "705.00",
     currency: "QAR",
     itemCount: 2,
@@ -200,5 +209,95 @@ describe("orders: filters", () => {
     await waitFor(() => expect(requests.at(-1)?.toString()).toBe("page=1&pageSize=20"));
     expect(screen.getByLabelText("Customer name")).toHaveValue("");
     expect(window.location.search).toBe("");
+  });
+});
+
+describe("orders: web orders", () => {
+  const boBranch = { id: "b-bo", code: "BO", name: "Bin Omran Branch", nameAr: "فرع بن عمران" };
+  const systemWeb = { id: "00000000-0000-4000-8000-0000000000d1", username: "system.web", displayName: "Website orders" };
+  const web = (code: string, overrides: Partial<OrderDetail> = {}) =>
+    makeOrder({
+      id: `00000000-0000-4000-8000-${code.replace(/\D/g, "").padStart(12, "0")}`,
+      code,
+      source: "WEB",
+      customerPhone: "+97455123456",
+      customerEmail: "sara@example.com",
+      branch: boBranch,
+      createdBy: systemWeb,
+      ...overrides,
+    });
+  const row = (code: string) => screen.getByRole("button", { name: `Open order ${code}` }).closest("tr")!;
+
+  it("marks web orders with a Web pill and their payment next to the status", async () => {
+    const showroom = makeOrder();
+    const paid = web("BO-000007", { status: "CONFIRMED", paymentStatus: "PAID", paidAt: "2026-09-21T09:05:00.000Z", confirmedBy: systemWeb, confirmedAt: "2026-09-21T09:05:00.000Z" });
+    const unpaid = web("BO-000008", { paymentStatus: "PENDING" });
+    const collected = web("BO-000009", {
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+      paidAt: "2026-09-21T09:05:00.000Z",
+      collectedAt: "2026-09-21T12:00:00.000Z",
+      confirmedBy: systemWeb,
+      confirmedAt: "2026-09-21T09:05:00.000Z",
+    });
+    const refunded = web("BO-000010", { status: "CANCELLED", paymentStatus: "REFUNDED", paidAt: "2026-09-21T09:05:00.000Z" });
+    server.use(http.get("/api/orders", () => HttpResponse.json(page(showroom, paid, unpaid, collected, refunded))));
+    renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order BO-000007" });
+
+    expect(within(row("BO-000007")).getByText("Web")).toBeInTheDocument();
+    expect(within(row("BO-000007")).getByText("Paid")).toBeInTheDocument();
+    expect(within(row("BO-000008")).getByText("Web")).toBeInTheDocument();
+    expect(within(row("BO-000008")).getByText("Awaiting payment")).toBeInTheDocument();
+    expect(within(row("BO-000009")).getByText("Collected")).toBeInTheDocument();
+    // one or the other: a collected order no longer says Paid
+    expect(within(row("BO-000009")).queryByText("Paid")).not.toBeInTheDocument();
+    expect(within(row("BO-000010")).getByText("Web")).toBeInTheDocument();
+    expect(within(row("BO-000010")).getByText("Refunded")).toBeInTheDocument();
+    // a showroom order is paid at the till: no pill, no payment badge
+    expect(within(row("GH-000042")).queryByText("Web")).not.toBeInTheDocument();
+    expect(within(row("GH-000042")).queryByText(/Paid|Awaiting payment|Refunded|Collected/)).not.toBeInTheDocument();
+  });
+
+  it("filters by source and keeps it in the URL", async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/orders", ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json(page(makeOrder()));
+      }),
+    );
+    const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order GH-000042" });
+    expect(requests.at(-1)?.has("source")).toBe(false);
+
+    const source = screen.getByRole("group", { name: "Source" });
+    expect(within(source).getByRole("button", { name: "All sources" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(source).getByRole("button", { name: "Web" }));
+    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("WEB"));
+    expect(within(source).getByRole("button", { name: "Web" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.location.search).toBe("?source=WEB");
+
+    await user.click(within(source).getByRole("button", { name: "Showroom" }));
+    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("SHOWROOM"));
+
+    await user.click(within(source).getByRole("button", { name: "All sources" }));
+    await waitFor(() => expect(requests.at(-1)?.has("source")).toBe(false));
+    expect(window.location.search).toBe("");
+  });
+
+  it("opens ?source=WEB already filtered", async () => {
+    window.history.replaceState(null, "", "/en/dashboard/orders?source=WEB");
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/orders", ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json(page(web("BO-000007", { paymentStatus: "PENDING" })));
+      }),
+    );
+    renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order BO-000007" });
+    expect(requests[0].get("source")).toBe("WEB");
+    expect(within(screen.getByRole("group", { name: "Source" })).getByRole("button", { name: "Web" })).toHaveAttribute("aria-pressed", "true");
   });
 });

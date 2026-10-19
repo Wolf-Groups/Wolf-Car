@@ -43,5 +43,13 @@ export function apiEnv(): Record<string, string> {
     AUTH_THROTTLE_LIMIT: "1000",
     RATE_LIMIT_PER_MINUTE: "100000",
     UPLOAD_DIR: "./storage/e2e-uploads",
+    // online checkout: the in-memory Tap stand-in, codes logged instead of texted,
+    // and echoed in the answer (the API runs as production here, which would hide them)
+    PAYMENTS_PROVIDER: "fake",
+    SMS_PROVIDER: "console",
+    OTP_DEV_CODE_IN_RESPONSE: "true",
+    WEB_PUBLIC_URL: WEB_URL,
+    API_PUBLIC_URL: API_URL,
+    TAP_SECRET_KEY: "fake-secret",
   };
 }

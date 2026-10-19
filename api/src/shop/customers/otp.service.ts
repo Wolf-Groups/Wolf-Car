@@ -23,8 +23,8 @@ export class OtpService {
   ) {}
 
   /** `devCode` only with the console sender outside production (or OTP_DEV_CODE_IN_RESPONSE). */
-  issue(phone: string, locale: 'ar' | 'en' = 'ar'): Promise<{ expiresAt: Date; devCode?: string }> {
-    return todo('OtpService.issue', this.prisma, this.sms, this.config, phone, locale);
+  issue(phone: string): Promise<{ expiresAt: Date; devCode?: string }> {
+    return todo('OtpService.issue', this.prisma, this.sms, this.config, phone);
   }
 
   /** 401 OTP_INVALID for a wrong, expired, consumed or over-tried code. */

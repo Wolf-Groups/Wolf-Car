@@ -8,6 +8,7 @@ import type { AuthUser } from '../common/types';
 import { Prisma } from '../generated/prisma/client';
 import { branchBarcodeBases } from '../products/branch-barcodes';
 import { PrismaService } from '../prisma/prisma.service';
+import { todo } from '../shop/todo';
 import type { ListOrdersQueryDto, UpdateOrderDto } from './dto/orders.dto';
 import { canReadAllBranches, orderReadScope, orderWriteScope } from './order-scope';
 import {
@@ -134,6 +135,15 @@ export class OrdersService {
   async cancel(user: AuthUser, id: string): Promise<OrderDetail> {
     const from: ('PENDING' | 'CONFIRMED')[] = user.role === 'SUPER_ADMIN' ? ['PENDING', 'CONFIRMED'] : ['PENDING'];
     return this.transition(user, id, 'CANCELLED', { cancelledById: user.id, cancelledAt: new Date() }, from);
+  }
+
+  /**
+   * Hands a paid web order over at the counter: one conditional update
+   * (source WEB, PAID, CONFIRMED, not yet collected) → collectedAt/collectedById.
+   * 404 outside the user's branch, else 409 ORDER_NOT_COLLECTABLE. Plan Task 8.
+   */
+  collect(user: AuthUser, id: string): Promise<OrderDetail> {
+    return todo('OrdersService.collect', user, id);
   }
 
   /** Status change as one conditional UPDATE, so two cashiers (or confirm vs. edit) cannot race. */

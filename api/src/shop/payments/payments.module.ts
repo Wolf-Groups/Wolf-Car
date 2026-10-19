@@ -4,7 +4,6 @@ import type { Env } from '../../config/env';
 import { OdooModule } from '../../odoo/odoo.module';
 import { FakePaymentGateway } from './fake-gateway';
 import { PAYMENT_GATEWAY, type PaymentGateway } from './payment-gateway';
-import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { TapClient } from './tap-client';
 
@@ -25,9 +24,13 @@ export function paymentGatewayFactory(config: ConfigService<Env, true>): Payment
   return null;
 }
 
+/**
+ * Providers only. PaymentsController is registered in ShopModule, which
+ * provides the CustomersService its CustomerGuard needs (Nest builds a
+ * controller's guards inside the controller's own module).
+ */
 @Module({
   imports: [OdooModule],
-  controllers: [PaymentsController],
   providers: [{ provide: PAYMENT_GATEWAY, inject: [ConfigService], useFactory: paymentGatewayFactory }, PaymentsService],
   exports: [PAYMENT_GATEWAY, PaymentsService],
 })

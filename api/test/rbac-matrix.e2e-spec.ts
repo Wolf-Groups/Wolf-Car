@@ -88,6 +88,20 @@ const MATRIX: Record<string, Caller[] | { public: number }> = {
   'POST /api/orders/:id/confirm': ['admin', 'cashier'],
   'POST /api/orders/:id/cancel': ['admin', 'cashier'],
   'GET /api/orders/:id/receipt': ['admin', 'cashier'],
+  // POST /api/orders/:id/collect (Task 8) and POST /api/orders/:id/odoo/retry (Task 10) are added with their routes
+
+  // the website's customers: no bearer token of any kind opens these, only the customer cookie
+  'POST /api/shop/otp': ALL,
+  'POST /api/shop/otp/verify': ALL,
+  'GET /api/shop/me': { public: 401 },
+  'POST /api/shop/logout': { public: 401 },
+  'POST /api/shop/logout-all': { public: 401 },
+  'POST /api/shop/orders': { public: 401 },
+  'GET /api/shop/orders/:id': { public: 401 },
+  'POST /api/shop/orders/:id/cancel': { public: 401 },
+  'POST /api/shop/orders/:id/pay': { public: 401 },
+  'POST /api/shop/orders/:id/reconcile': { public: 401 },
+  'POST /api/shop/payments/tap/webhook': { public: 401 }, // empty body has no signature
 
   'GET /api/ppf/calendar': ['admin', 'reservations'],
   'GET /api/ppf/bookings': ['admin', 'reservations'],

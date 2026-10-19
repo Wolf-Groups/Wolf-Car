@@ -6,6 +6,7 @@ import { CustomerGuard } from './customers/customer.guard';
 import { CustomersService } from './customers/customers.service';
 import { OtpService } from './customers/otp.service';
 import { ShopAuthController } from './customers/shop-auth.controller';
+import { PaymentsController } from './payments/payments.controller';
 import { PaymentsModule } from './payments/payments.module';
 import { ConsoleSmsSender, SMS_SENDER } from './sms/sms-sender';
 
@@ -16,7 +17,7 @@ import { ConsoleSmsSender, SMS_SENDER } from './sms/sms-sender';
  */
 @Module({
   imports: [PaymentsModule],
-  controllers: [ShopAuthController, CheckoutController],
+  controllers: [ShopAuthController, CheckoutController, PaymentsController],
   providers: [CustomersService, OtpService, CustomerGuard, CheckoutService, CheckoutExpiryService, { provide: SMS_SENDER, useClass: ConsoleSmsSender }],
   exports: [CustomersService, CustomerGuard],
 })

@@ -1,3 +1,5 @@
+import { todo } from '../shop/todo';
+
 /**
  * Minimal read-only client for Odoo's JSON-RPC endpoint. The only file that
  * knows Odoo's wire format; everything else works with plain rows.
@@ -45,6 +47,16 @@ export class OdooClient {
 
   read<T>(model: string, ids: number[], fields: readonly string[]): Promise<T[]> {
     return this.execute<T[]>(model, 'read', [ids], { fields: [...fields] });
+  }
+
+  /** Creates one record (execute_kw `create` with [[values]]) and answers its id. Online checkout, plan Task 9. */
+  create(model: string, values: Record<string, unknown>): Promise<number> {
+    return todo('OdooClient.create', model, values);
+  }
+
+  /** Calls a model method on ids (execute_kw `method` [ids] kwargs), e.g. sale.order action_confirm. Plan Task 9. */
+  call<T>(model: string, method: string, ids: number[], kwargs: Record<string, unknown> = {}): Promise<T> {
+    return todo('OdooClient.call', model, method, ids, kwargs);
   }
 
   /**

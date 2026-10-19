@@ -34,6 +34,8 @@ export class OdooOrdersService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     const env = this.config as unknown as { get(key: string): string | undefined };
+    // Task 4 registers this service (PaymentsService injects it); Task 10 removes this line so the timer runs.
+    if (env.get('NODE_ENV') !== 'never') return;
     if (env.get('NODE_ENV') === 'test') return;
     this.timer = setInterval(() => void this.processDue().catch((err: Error) => this.logger.error(err.message)), 60_000);
     this.timer.unref();
@@ -58,8 +60,9 @@ export class OdooOrdersService implements OnModuleInit, OnModuleDestroy {
     return todo('OdooOrdersService.processDue', this.prisma, this.running, now);
   }
 
-  processOne(outboxId: string): Promise<void> {
-    return todo('OdooOrdersService.processOne', outboxId);
+  /** Tries one outbox row. The backoff and the no-writer wait start from `now`; processDue passes its own `now`. */
+  processOne(outboxId: string, now: Date = new Date()): Promise<void> {
+    return todo('OdooOrdersService.processOne', outboxId, now);
   }
 
   /** Finance's "Retry": back to PENDING, now. 404 when the order has no outbox row. */

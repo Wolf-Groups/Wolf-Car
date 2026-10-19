@@ -11,14 +11,15 @@ import { PAYMENT_GATEWAY, type PaymentGateway } from './payment-gateway';
 import type { TapCharge } from './tap-charge';
 import { todo } from '../todo';
 
-export type SettleOutcome = 'paid' | 'already_paid' | 'failed' | 'pending' | 'amount_mismatch' | 'unknown_charge';
+export type SettleOutcome = 'paid' | 'already_paid' | 'failed' | 'pending' | 'amount_mismatch' | 'duplicate_capture' | 'unknown_charge';
 export type SettleVia = 'webhook' | 'reconcile' | 'create';
 
 /**
  * Card payments of web orders. The one rule: an order becomes PAID only in
  * `settle`, from a charge object that came from the provider (a verified
  * webhook, getCharge, or the create answer), never from the browser.
- * Decision table and error codes: the plan, Task 6.
+ * Decision table and error codes: the plan, Task 6. Without a gateway
+ * (PAYMENT_GATEWAY null) pay, reconcile and the webhook answer 503 CHECKOUT_UNAVAILABLE.
  */
 @Injectable()
 export class PaymentsService {
@@ -30,7 +31,7 @@ export class PaymentsService {
     private readonly odooOrders: OdooOrdersService,
   ) {}
 
-  /** Creates a Payment and a Tap charge; answers the 3-D Secure URL. 409 ORDER_NOT_PAYABLE / ALREADY_PAID, 402 PAYMENT_FAILED. */
+  /** Creates a Payment and a Tap charge; answers the 3-D Secure URL. 404 for anyone else's order. 409 ALREADY_PAID (checked first) / ORDER_NOT_PAYABLE, 402 PAYMENT_FAILED. */
   pay(customer: CustomerPrincipal, orderId: string, dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
     return todo('PaymentsService.pay', this.prisma, this.config, this.trail, this.gateway, this.odooOrders, customer, orderId, dto);
   }
@@ -45,7 +46,7 @@ export class PaymentsService {
     return todo('PaymentsService.handleWebhook', body, hashHeader);
   }
 
-  /** Idempotent. Captured → order PAID + CONFIRMED (+ Odoo outbox), even after expiry (metadata afterExpiry); mismatch → payment captured, order untouched. */
+  /** Idempotent: a payment already CAPTURED never changes again. Captured → order PAID + CONFIRMED (+ Odoo outbox), even after expiry (metadata afterExpiry); mismatch, or a second capture on an order already PAID/REFUNDED (DUPLICATE_CAPTURE) → payment captured, order untouched. */
   settle(charge: TapCharge, via: SettleVia): Promise<{ outcome: SettleOutcome; orderId: string | null }> {
     return todo('PaymentsService.settle', charge, via);
   }

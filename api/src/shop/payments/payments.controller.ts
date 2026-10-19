@@ -35,7 +35,7 @@ export class PaymentsController {
   }
 
   /** Tap posts the charge here. No cookie: the hashstring header is the proof. */
-  @Audit('shop.payment.webhook', { entity: 'Payment' })
+  @Audit('shop.payment.webhook', { entity: 'Order' })
   @Post('payments/tap/webhook')
   @HttpCode(200)
   webhook(@Body() body: unknown, @Headers('hashstring') hashstring: string | string[] | undefined): Promise<{ received: true }> {

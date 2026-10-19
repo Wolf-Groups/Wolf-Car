@@ -1,8 +1,9 @@
 import type { VariantInfo } from "@/lib/variants";
 import type { SiteDevice, SiteSource } from "@/shared/analytics";
 import type { OrderStatusName, PermissionGroup, PermissionKey, RoleName } from "@/shared/permissions";
+import type { OrderSourceName, PaymentStatusName } from "@/shared/shop";
 
-export type { OrderStatusName, PermissionKey, RoleName };
+export type { OrderSourceName, OrderStatusName, PaymentStatusName, PermissionKey, RoleName };
 
 export interface BranchSummary {
   id: string;
@@ -147,12 +148,26 @@ export interface ServiceCatalog {
   services: Service[];
 }
 
+/** One attempt to charge a card (the newest is shown on the order). */
+export type PaymentAttemptStatus = "INITIATED" | "CAPTURED" | "FAILED";
+/** Where a paid web order stands in the Odoo outbox. */
+export type OdooOutboxStatus = "PENDING" | "DONE" | "FAILED";
+
 export interface OrderSummary {
   id: string;
   code: string;
   number: number;
   status: OrderStatusName;
+  /** SHOWROOM for the kiosk, WEB for the website's online checkout */
+  source: OrderSourceName;
+  /** NONE for showroom orders */
+  paymentStatus: PaymentStatusName;
+  paidAt: string | null;
+  /** when the cashier handed a paid web order over */
+  collectedAt: string | null;
   customerName: string;
+  /** E.164, web orders only */
+  customerPhone: string | null;
   total: string;
   currency: string;
   itemCount: number;
@@ -179,6 +194,48 @@ export interface OrderItem {
 
 export interface OrderDetail extends OrderSummary {
   items: OrderItem[];
+  customerEmail: string | null;
+  collectedBy: PersonRef | null;
+  /** the newest card attempt; null for showroom orders and before the first attempt */
+  payment: { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null } | null;
+  /** null for showroom orders and unpaid web orders; when Odoo writing is off it is PENDING with lastError ODOO_WRITE_NOT_CONFIGURED */
+  odoo: { status: OdooOutboxStatus; saleOrderId: number | null; attempts: number; lastError: string | null; nextAttemptAt: string | null } | null;
+}
+
+// ---- online checkout (the website's customer, not staff) ----
+
+export interface CustomerProfile {
+  /** E.164, "+97455123456" */
+  phone: string;
+  name: string | null;
+  email: string | null;
+}
+
+export interface WebOrderItem {
+  productId: string;
+  productName: string;
+  unitPrice: string;
+  quantity: number;
+  lineTotal: string;
+  thumbUrl: string;
+}
+
+/** What the website is told about a customer's own order (the API's WebOrderView, dates as strings). */
+export interface WebOrder {
+  id: string;
+  code: string;
+  status: OrderStatusName;
+  paymentStatus: PaymentStatusName;
+  /** "619.50" */
+  total: string;
+  currency: string;
+  createdAt: string;
+  expiresAt: string | null;
+  paidAt: string | null;
+  branch: { code: string; name: string; nameAr: string };
+  customer: { name: string | null; email: string | null; phone: string };
+  items: WebOrderItem[];
+  lastPayment: { status: PaymentAttemptStatus; failureCode: string | null } | null;
 }
 
 export interface UserView {

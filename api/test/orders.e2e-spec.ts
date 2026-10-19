@@ -1,6 +1,7 @@
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, login, showroomLogin, type Login } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
+import { chargeIdOf, createWebOrder, CUSTOMER_PHONE, defaultBasket, fakeGateway, paidWebOrder, payWebOrder, SHOP_ENV, signedWebhook, signInCustomer } from './utils/shop';
 
 describe('Showroom & orders (e2e)', () => {
   let t: TestApp;
@@ -10,7 +11,8 @@ describe('Showroom & orders (e2e)', () => {
   let tok: Record<'admin' | 'finance' | 'ghCashier' | 'boCashier' | 'ghManager', string>;
 
   beforeAll(async () => {
-    t = await createTestApp();
+    // the fake payment gateway only matters for the web-order block; showroom orders behave the same
+    t = await createTestApp({ ...SHOP_ENV });
   });
   beforeEach(async () => {
     world = await seedWorld(t.prisma);
@@ -272,6 +274,153 @@ describe('Showroom & orders (e2e)', () => {
         t.http().post(`/api/orders/${ghOrder.id}/confirm`).set(bearer(tok.ghManager)),
       ]);
       expect([a.status, b.status].sort((x, y) => x - y)).toEqual([200, 409]);
+    });
+  });
+
+  describe('web orders in the dashboard', () => {
+    let sara: string;
+    let unpaid: { id: string; code: string };
+    let paid: { id: string; code: string; chargeId: string };
+    let showroomBo: { id: string; code: string };
+
+    beforeEach(async () => {
+      sara = await signInCustomer(t, CUSTOMER_PHONE);
+      showroomBo = (await place(kioskBo, { customerName: 'Walk In' })).body; // BO-000001
+      const created = await createWebOrder(t, sara, defaultBasket(world));
+      expect(created.status).toBe(201);
+      unpaid = created.body; // BO-000002, 619.50
+      paid = await paidWebOrder(t, sara, world); // BO-000003, 619.50
+    });
+
+    const api = (token: string) => ({
+      list: (q = '') => t.http().get(`/api/orders${q}`).set(bearer(token)),
+      get: (id: string) => t.http().get(`/api/orders/${id}`).set(bearer(token)),
+      patch: (id: string, body: object) => t.http().patch(`/api/orders/${id}`).set(bearer(token)).send(body),
+      confirm: (id: string) => t.http().post(`/api/orders/${id}/confirm`).set(bearer(token)),
+      cancel: (id: string) => t.http().post(`/api/orders/${id}/cancel`).set(bearer(token)),
+      collect: (id: string) => t.http().post(`/api/orders/${id}/collect`).set(bearer(token)),
+    });
+    const codes = (res: { body: { items: { code: string }[] } }) => res.body.items.map((o) => o.code).sort();
+
+    it('the source filter separates web orders from showroom ones', async () => {
+      const bo = api(tok.boCashier);
+      expect(codes(await bo.list())).toEqual([showroomBo.code, unpaid.code, paid.code].sort());
+      expect(codes(await bo.list('?source=WEB'))).toEqual([unpaid.code, paid.code].sort());
+      expect(codes(await bo.list('?source=SHOWROOM'))).toEqual([showroomBo.code]);
+      expect((await bo.list('?source=PHONE')).status).toBe(400);
+      expect(codes(await api(tok.finance).list('?source=WEB'))).toEqual([unpaid.code, paid.code].sort());
+      expect((await api(tok.ghCashier).list('?source=WEB')).body.total).toBe(0);
+    });
+
+    it('the BO cashier sees where the order came from and whether it is paid; the GH cashier sees nothing', async () => {
+      const bo = api(tok.boCashier);
+      const list = await bo.list('?source=WEB');
+      const summary = (code: string) => list.body.items.find((o: { code: string }) => o.code === code);
+      expect(summary(unpaid.code)).toMatchObject({ source: 'WEB', status: 'PENDING', paymentStatus: 'PENDING', paidAt: null, collectedAt: null, customerPhone: CUSTOMER_PHONE, customerName: 'Sara Al-Mansouri' });
+      expect(summary(paid.code)).toMatchObject({ source: 'WEB', status: 'CONFIRMED', paymentStatus: 'PAID', paidAt: expect.any(String), collectedAt: null, customerPhone: CUSTOMER_PHONE });
+      expect(summary(showroomBo.code)).toMatchObject({ source: 'SHOWROOM', paymentStatus: 'NONE', customerPhone: null });
+
+      const detail = await bo.get(paid.id);
+      expect(detail.status).toBe(200);
+      expect(detail.body).toMatchObject({
+        source: 'WEB',
+        paymentStatus: 'PAID',
+        total: '619.50',
+        customerEmail: 'sara@example.com',
+        customerPhone: CUSTOMER_PHONE,
+        createdBy: { username: 'system.web' },
+        confirmedBy: { username: 'system.web' },
+        collectedBy: null,
+        payment: { chargeId: paid.chargeId, status: 'CAPTURED', failureCode: null, refundId: null },
+      });
+      expect((await bo.get(showroomBo.id)).body).toMatchObject({ source: 'SHOWROOM', payment: null, odoo: null, customerEmail: null });
+
+      const gh = api(tok.ghCashier);
+      expect((await gh.get(paid.id)).status).toBe(404);
+      expect((await gh.patch(unpaid.id, { customerName: 'Hacked' })).status).toBe(404);
+      expect((await gh.confirm(unpaid.id)).status).toBe(404);
+      expect((await gh.cancel(paid.id)).status).toBe(404);
+      expect((await gh.collect(paid.id)).status).toBe(404);
+    });
+
+    it('the Super Admin cancels a paid web order: the card is refunded first', async () => {
+      // the cashier may not cancel a confirmed order, paid or not
+      expect((await api(tok.boCashier).cancel(paid.id)).status).toBe(409);
+
+      const res = await api(tok.admin).cancel(paid.id);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledBy: { username: 'admin' } });
+      expect(res.body.payment).toMatchObject({ status: 'CAPTURED', refundId: expect.stringMatching(/^rf_fake_/) });
+
+      expect((await fakeGateway(t).getCharge(paid.chargeId)).status).toBe('REFUNDED');
+      const payment = await t.prisma.payment.findUniqueOrThrow({ where: { chargeId: paid.chargeId } });
+      expect(payment.refundId).toMatch(/^rf_fake_/);
+      expect(payment.refundedAt).not.toBeNull();
+      const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'order.cancel', entityId: paid.id, outcome: 'SUCCESS' } });
+      expect(log.metadata).toMatchObject({ refundId: payment.refundId });
+      // nothing is refunded twice
+      expect((await api(tok.admin).cancel(paid.id)).status).toBe(409);
+    });
+
+    it('the BO cashier cancels an amount-mismatch order, and the customer is refunded', async () => {
+      const created = await createWebOrder(t, sara, defaultBasket(world));
+      await payWebOrder(t, sara, created.body.id);
+      const chargeId = await chargeIdOf(t, created.body.id);
+      expect((await signedWebhook(t, { ...fakeGateway(t).settle(chargeId, 'CAPTURED'), amount: 100 })).status).toBe(200);
+
+      const bo = api(tok.boCashier);
+      expect((await bo.get(created.body.id)).body).toMatchObject({ status: 'PENDING', paymentStatus: 'PENDING', payment: { chargeId, status: 'CAPTURED', failureCode: 'AMOUNT_MISMATCH' } });
+
+      const res = await bo.cancel(created.body.id);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', payment: { failureCode: 'AMOUNT_MISMATCH', refundId: expect.stringMatching(/^rf_fake_/) } });
+      expect((await fakeGateway(t).getCharge(chargeId)).status).toBe('REFUNDED');
+    });
+
+    it('a failed refund leaves the order as it was', async () => {
+      await t.prisma.payment.updateMany({ where: { chargeId: paid.chargeId }, data: { chargeId: 'chg_fake_gone' } });
+      const res = await api(tok.admin).cancel(paid.id);
+      expect(res.status).toBe(502);
+      expect(res.body.code).toBe('REFUND_FAILED');
+      expect((await api(tok.admin).get(paid.id)).body).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID' });
+    });
+
+    it('staff cannot edit or confirm a web order; the cashier may still cancel an unpaid one', async () => {
+      const bo = api(tok.boCashier);
+      const edit = await bo.patch(unpaid.id, { customerName: 'Sara M.' });
+      expect(edit.status).toBe(409);
+      expect(edit.body.code).toBe('WEB_ORDER_READONLY');
+      const confirm = await bo.confirm(unpaid.id);
+      expect(confirm.status).toBe(409);
+      expect(confirm.body.code).toBe('WEB_ORDER_UNPAID');
+      // not even the Super Admin, whatever the status: the total is what the card was charged
+      expect((await api(tok.admin).patch(paid.id, { customerName: 'Corrected' })).body.code).toBe('WEB_ORDER_READONLY');
+      expect((await api(tok.admin).confirm(unpaid.id)).body.code).toBe('WEB_ORDER_UNPAID');
+      expect((await t.prisma.order.findUniqueOrThrow({ where: { id: unpaid.id } })).customerName).toBe('Sara Al-Mansouri');
+
+      const cancelled = await bo.cancel(unpaid.id);
+      expect(cancelled.status).toBe(200);
+      expect(cancelled.body.status).toBe('CANCELLED');
+      expect(cancelled.body.paymentStatus).not.toBe('REFUNDED'); // nothing was captured, nothing to refund
+    });
+
+    it('the cashier marks the paid order collected, once', async () => {
+      const bo = api(tok.boCashier);
+      const res = await bo.collect(paid.id);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id: paid.id, status: 'CONFIRMED', paymentStatus: 'PAID', collectedAt: expect.any(String), collectedBy: { username: 'bo.cashier' } });
+      expect((await bo.list('?source=WEB')).body.items.find((o: { id: string }) => o.id === paid.id).collectedAt).toEqual(expect.any(String));
+
+      const again = await bo.collect(paid.id);
+      expect(again.status).toBe(409);
+      expect(again.body.code).toBe('ORDER_NOT_COLLECTABLE');
+      expect((await bo.collect(unpaid.id)).body.code).toBe('ORDER_NOT_COLLECTABLE');
+      expect((await bo.collect(showroomBo.id)).body.code).toBe('ORDER_NOT_COLLECTABLE');
+      expect((await api(tok.finance).collect(paid.id)).status).toBe(403);
+      expect((await api(tok.ghManager).collect(paid.id)).status).toBe(403);
+
+      const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'order.collect', entityId: paid.id, outcome: 'SUCCESS' } });
+      expect(log).toMatchObject({ actorUsername: 'bo.cashier', branchId: world.bo.id });
     });
   });
 });

@@ -1,11 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { mock } from 'jest-mock-extended';
+import { ClsServiceManager } from 'nestjs-cls';
 import { lastValueFrom, of, throwError } from 'rxjs';
 import { authUser, httpContext } from '../../test/unit/helpers';
 import { AUDIT_KEY, SKIP_AUDIT_KEY } from '../common/decorators/audit.decorator';
 import type { ActivityService } from './activity.service';
-import type { AuditTrail } from './audit-trail.service';
+import { AuditTrail } from './audit-trail.service';
 import { AuditInterceptor } from './audit.interceptor';
 
 const handler = (key?: string, value?: unknown) => {
@@ -68,6 +69,46 @@ describe('AuditInterceptor', () => {
     await expect(lastValueFrom(interceptor.intercept(ctx, { handle: () => throwError(() => err) }))).rejects.toBe(err);
     expect(activity.record).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'FAILURE', metadata: expect.objectContaining({ status: 403, reason: 'MISSING_PERMISSION' }) }),
+    );
+  });
+
+  it('records a FAILURE with the reason when the handler marked it so but answered normally, and passes the answer through', async () => {
+    const ctx = httpContext({ method: 'POST', params: {} }, handler(AUDIT_KEY, { action: 'shop.payment.webhook', entity: 'Payment' }));
+    const answer = { received: true };
+    const result = await lastValueFrom(
+      interceptor.intercept(ctx, {
+        handle: () => {
+          // what trail.markFailure('X') leaves in the request state
+          trail.snapshot.mockReturnValue({ outcome: 'FAILURE', metadata: { reason: 'X' } });
+          return of(answer);
+        },
+      }),
+    );
+    expect(result).toBe(answer);
+    expect(activity.record).toHaveBeenCalledTimes(1);
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'shop.payment.webhook', outcome: 'FAILURE', metadata: expect.objectContaining({ reason: 'X' }) }),
+    );
+  });
+
+  it('a handler that calls the real markFailure and returns normally yields one FAILURE entry', async () => {
+    const cls = ClsServiceManager.getClsService();
+    const realTrail = new AuditTrail(cls);
+    const real = new AuditInterceptor(new Reflector(), activity, realTrail);
+    await cls.run(async () => {
+      const ctx = httpContext({ method: 'POST' }, handler(AUDIT_KEY, { action: 'shop.payment.webhook', entity: 'Payment' }));
+      await lastValueFrom(
+        real.intercept(ctx, {
+          handle: () => {
+            realTrail.addMetadata({ chargeId: 'chg_1' }).markFailure('X');
+            return of({ received: true });
+          },
+        }),
+      );
+    });
+    expect(activity.record).toHaveBeenCalledTimes(1);
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'FAILURE', metadata: expect.objectContaining({ reason: 'X', chargeId: 'chg_1' }) }),
     );
   });
 

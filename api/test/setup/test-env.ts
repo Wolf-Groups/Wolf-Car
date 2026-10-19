@@ -24,6 +24,15 @@ export function testEnv(): Record<string, string> {
     ODOO_DB: '',
     ODOO_LOGIN: '',
     ODOO_API_KEY: '',
+    // nor writes to one, and pays through the in-memory gateway (online checkout).
+    // These must be here, not in createTestApp(env): the gateway is chosen when providers are built.
+    ODOO_WRITE_LOGIN: '',
+    ODOO_WRITE_API_KEY: '',
+    PAYMENTS_PROVIDER: 'fake',
+    TAP_SECRET_KEY: 'fake-secret',
+    SMS_PROVIDER: 'console',
+    WEB_PUBLIC_URL: 'http://localhost:3000',
+    API_PUBLIC_URL: 'http://localhost:3000',
     JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET ?? 'test-secret-test-secret-test-secret-1234',
     TOTP_ENCRYPTION_KEY: process.env.TOTP_ENCRYPTION_KEY ?? 'x+2Xewyg9jKZ9SYe3LaZo/6ETQkH2lyjFhSkDhfxoBo=',
   };

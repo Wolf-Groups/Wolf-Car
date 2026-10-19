@@ -199,6 +199,7 @@ function OrdersManager() {
   const filters = useMemo<OrderFilters>(
     () => ({
       status: state.status,
+      source: state.source,
       from: state.from,
       to: state.to,
       customerName: state.customerName,
@@ -206,7 +207,7 @@ function OrdersManager() {
       branchId: readsAll ? state.branchId : "",
       page: state.page,
     }),
-    [state.status, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
+    [state.status, state.source, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
   );
   const filtered = hasFilters(filters);
 

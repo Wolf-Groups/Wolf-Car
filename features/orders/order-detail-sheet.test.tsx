@@ -1,0 +1,266 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { describe, expect, it, vi } from "vitest";
+import { Toaster } from "@/components/ui/sonner";
+import type { OrderDetail, PermissionKey } from "@/lib/api/types";
+import { server } from "@/tests/msw";
+import { makeUser, renderWithApp } from "@/tests/render";
+import { OrderDetailSheet } from "./order-detail-sheet";
+
+const BRANCH = { id: "b-bo", code: "BO", name: "Bin Omran Branch", nameAr: "فرع بن عمران" };
+/** Granted to Finance by plan Task 1 (shared/permissions.ts); spelled out here until that key exists. */
+const ODOO_RETRY = "order.odoo.retry" as string as PermissionKey;
+const CASHIER: PermissionKey[] = ["order.create", "order.read.branch", "order.update", "order.cancel", "order.confirm", "order.receipt.download"];
+const boCashier = () => makeUser({ username: "bo.cashier", displayName: "BO Cashier", role: "CASHIER", branch: BRANCH, permissions: CASHIER });
+const finance = (permissions: PermissionKey[] = ["product.read", "product.update.price", "order.read.all", ODOO_RETRY]) =>
+  makeUser({ username: "finance", displayName: "Finance", role: "FINANCE", branch: null, permissions });
+
+const SYSTEM_WEB = { id: "00000000-0000-4000-8000-0000000000w1", username: "system.web", displayName: "Website orders" };
+const CASHIER_REF = { id: "00000000-0000-4000-8000-0000000000c2", username: "bo.cashier", displayName: "BO Cashier" };
+const CHARGE = "chg_TS05A4120230736x9K22710693";
+const SECOND_CHARGE = "chg_TS07A5520230736Lm9P88214475";
+
+/** A web order paid by card, confirmed by the payment, not yet collected, already in Odoo. */
+function webOrder(overrides: Partial<OrderDetail> = {}): OrderDetail {
+  return {
+    id: "00000000-0000-4000-8000-0000000000b7",
+    code: "BO-000007",
+    number: 7,
+    status: "CONFIRMED",
+    source: "WEB",
+    paymentStatus: "PAID",
+    paidAt: "2031-03-10T09:05:00.000Z",
+    collectedAt: null,
+    customerName: "Sara Ali",
+    customerPhone: "+97455123456",
+    customerEmail: "sara@example.com",
+    collectedBy: null,
+    payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: null },
+    odoo: { status: "DONE", saleOrderId: 4711, attempts: 1, lastError: null, nextAttemptAt: null },
+    total: "619.50",
+    currency: "QAR",
+    itemCount: 2,
+    branch: BRANCH,
+    createdBy: SYSTEM_WEB,
+    confirmedBy: SYSTEM_WEB,
+    confirmedAt: "2031-03-10T09:05:00.000Z",
+    cancelledBy: null,
+    cancelledAt: null,
+    createdAt: "2031-03-10T09:00:00.000Z",
+    updatedAt: "2031-03-10T09:05:00.000Z",
+    items: [
+      { id: "line-1", productId: "p-cam", productName: "4K Dash Cam (Front & Rear)", barcode: "6291041500244", thumbUrl: "/api/uploads/cam-sm.webp", unitPrice: "499.00", quantity: 1, lineTotal: "499.00" },
+      { id: "line-2", productId: "p-mats", productName: "3D Floor Mats", barcode: null, thumbUrl: "/api/uploads/mats-sm.webp", unitPrice: "120.50", quantity: 1, lineTotal: "120.50" },
+    ],
+    ...overrides,
+  };
+}
+
+/** Serves the order (and its later versions) and counts the reads. */
+function serve(...versions: OrderDetail[]) {
+  const reads = { count: 0 };
+  server.use(
+    http.get("/api/orders/:id", () => {
+      const order = versions[Math.min(reads.count, versions.length - 1)];
+      reads.count += 1;
+      return HttpResponse.json(order);
+    }),
+  );
+  return reads;
+}
+
+async function openSheet(order: OrderDetail, user = boCashier()) {
+  // a toaster too, so a message is found whether it is a toast or a line in the sheet
+  const view = renderWithApp(
+    <>
+      <OrderDetailSheet orderId={order.id} onClose={vi.fn()} />
+      <Toaster />
+    </>,
+    { user },
+  );
+  const sheet = await screen.findByRole("dialog", { name: /Order .*BO-000007/ });
+  await within(sheet).findByText("Sara Ali");
+  return { ...view, sheet };
+}
+
+describe("order detail: web orders", () => {
+  it("shows how to reach the customer: the phone as a tel: link and the email", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order);
+    const phone = within(sheet).getByRole("link", { name: /55\s?12\s?34\s?56|5512\s?3456/ });
+    expect(phone).toHaveAttribute("href", "tel:+97455123456");
+    expect(within(sheet).getByText("sara@example.com")).toBeInTheDocument();
+    expect(within(sheet).getByText("Phone")).toBeInTheDocument();
+    expect(within(sheet).getByText("Email")).toBeInTheDocument();
+  });
+
+  it("shows the card payment with the last 8 characters of Tap's charge id", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText("Payment")).toBeInTheDocument();
+    expect(within(sheet).getByText(/22710693/)).toBeInTheDocument();
+    expect(within(sheet).queryByText(new RegExp(CHARGE))).not.toBeInTheDocument();
+  });
+
+  it("warns that Tap charged another amount, so the cashier cancels (and refunds) the order", async () => {
+    const order = webOrder({
+      status: "PENDING",
+      paymentStatus: "PENDING",
+      paidAt: null,
+      confirmedBy: null,
+      confirmedAt: null,
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      odoo: null,
+    });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText("Tap charged a different amount than the order total. Cancel the order to refund the customer.")).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
+  });
+
+  it("flags a second charge on a paid order so staff refund that charge in Tap", async () => {
+    // plan Task 6: the order stays paid by the first charge; the newest attempt is the duplicate
+    const order = webOrder({ payment: { chargeId: SECOND_CHARGE, status: "CAPTURED", failureCode: "DUPLICATE_CAPTURE", refundId: null } });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText("Charged twice — refund this charge in Tap")).toBeInTheDocument();
+    expect(within(sheet).getByText(/88214475/)).toBeInTheDocument();
+  });
+
+  it("shows a refunded payment with its refund", async () => {
+    const order = webOrder({
+      status: "CANCELLED",
+      paymentStatus: "REFUNDED",
+      cancelledBy: CASHIER_REF,
+      cancelledAt: "2031-03-10T10:00:00.000Z",
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+    });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getAllByText("Refunded").length).toBeGreaterThan(0);
+    expect(within(sheet).getByText(/12345678/)).toBeInTheDocument();
+  });
+
+  it("shows why the last card attempt failed", async () => {
+    const order = webOrder({
+      status: "PENDING",
+      paymentStatus: "PENDING",
+      paidAt: null,
+      confirmedBy: null,
+      confirmedAt: null,
+      odoo: null,
+      payment: { chargeId: CHARGE, status: "FAILED", failureCode: "DECLINED", refundId: null },
+    });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText(/DECLINED/)).toBeInTheDocument();
+  });
+
+  // regexes: interpolated values may be wrapped in bidi isolates (FSI…PDI), as isolate() does elsewhere in the sheet
+  it.each([
+    ["DONE", { status: "DONE", saleOrderId: 4711, attempts: 1, lastError: null, nextAttemptAt: null }, /Sale order .*4711.* created in Odoo/],
+    ["PENDING", { status: "PENDING", saleOrderId: null, attempts: 2, lastError: "boom", nextAttemptAt: "2031-03-10T09:20:00.000Z" }, /Waiting to be sent to Odoo/],
+    ["FAILED", { status: "FAILED", saleOrderId: null, attempts: 1, lastError: "PRODUCT_NOT_IN_ODOO: 3D Floor Mats", nextAttemptAt: null }, /Odoo rejected it: .*PRODUCT_NOT_IN_ODOO: 3D Floor Mats/],
+  ] as const)("shows where the order stands in Odoo: %s", async (_status, odoo, text) => {
+    const order = webOrder({ odoo: { ...odoo } });
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getByText(text)).toBeInTheDocument();
+  });
+
+  it("shows when a pending order will next be sent to Odoo", async () => {
+    const order = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 2, lastError: "boom", nextAttemptAt: "2031-03-10T09:20:00.000Z" } });
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getByText(/Waiting to be sent to Odoo/)).toBeInTheDocument();
+    // 09:20Z is 12:20 in Asia/Qatar
+    expect(within(sheet).getByText(/12:20/)).toBeInTheDocument();
+  });
+
+  it("says when Odoo writing is not set up", async () => {
+    const order = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 0, lastError: "ODOO_WRITE_NOT_CONFIGURED", nextAttemptAt: "2031-03-10T10:05:00.000Z" } });
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getByText("Odoo writing is not set up.")).toBeInTheDocument();
+  });
+
+  it("lets Finance send a failed order to Odoo again, and reloads it", async () => {
+    const failed = webOrder({ odoo: { status: "FAILED", saleOrderId: null, attempts: 24, lastError: "boom", nextAttemptAt: null } });
+    const retried = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 24, lastError: null, nextAttemptAt: "2031-03-10T11:00:00.000Z" } });
+    const reads = serve(failed, retried);
+    let retries = 0;
+    server.use(
+      http.post("/api/orders/:id/odoo/retry", ({ params }) => {
+        retries += 1;
+        expect(params.id).toBe(failed.id);
+        return HttpResponse.json(retried);
+      }),
+    );
+    const { sheet, user } = await openSheet(failed, finance());
+    await user.click(within(sheet).getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Queued for Odoo again")).toBeInTheDocument();
+    await waitFor(() => expect(retries).toBe(1));
+    await waitFor(() => expect(within(sheet).getByText(/Waiting to be sent to Odoo/)).toBeInTheDocument());
+    await waitFor(() => expect(reads.count).toBeGreaterThan(1));
+  });
+
+  it("offers Retry only to those with order.odoo.retry", async () => {
+    const failed = webOrder({ odoo: { status: "FAILED", saleOrderId: null, attempts: 24, lastError: "boom", nextAttemptAt: null } });
+    serve(failed);
+    const { sheet } = await openSheet(failed, finance(["order.read.all"]));
+    expect(within(sheet).getByText(/Odoo rejected it: .*boom/)).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("offers Collected only to those with order.confirm", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getAllByText("Paid").length).toBeGreaterThan(0);
+    expect(within(sheet).queryByRole("button", { name: "Mark as collected" })).not.toBeInTheDocument();
+  });
+
+  it("lets the cashier mark a paid web order as collected", async () => {
+    const order = webOrder();
+    const collected = webOrder({ collectedAt: "2031-03-10T12:00:00.000Z", collectedBy: CASHIER_REF });
+    serve(order, collected);
+    let collects = 0;
+    server.use(
+      http.post("/api/orders/:id/collect", () => {
+        collects += 1;
+        return HttpResponse.json(collected);
+      }),
+    );
+    const { sheet, user } = await openSheet(order);
+    await user.click(within(sheet).getByRole("button", { name: "Mark as collected" }));
+    // a confirmation step is allowed; it confirms with the same words
+    const confirm = screen.queryByRole("alertdialog");
+    if (confirm) await user.click(within(confirm).getByRole("button", { name: "Mark as collected" }));
+
+    await waitFor(() => expect(collects).toBe(1));
+    expect(await within(sheet).findByText(/Collected by .*BO Cashier/)).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Mark as collected" })).not.toBeInTheDocument();
+  });
+
+  it("offers Collected only for paid web orders not yet collected", async () => {
+    const unpaid = webOrder({ status: "PENDING", paymentStatus: "PENDING", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null });
+    serve(unpaid);
+    const { sheet } = await openSheet(unpaid);
+    expect(within(sheet).getAllByText("Awaiting payment").length).toBeGreaterThan(0);
+    expect(within(sheet).queryByRole("button", { name: "Mark as collected" })).not.toBeInTheDocument();
+  });
+
+  it("never offers Edit or Confirm on a web order: the card payment confirms it", async () => {
+    const unpaid = webOrder({ status: "PENDING", paymentStatus: "PENDING", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null });
+    serve(unpaid);
+    const { sheet } = await openSheet(unpaid);
+    expect(within(sheet).getByRole("link", { name: /55\s?12\s?34\s?56|5512\s?3456/ })).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Edit order" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Confirm order" })).not.toBeInTheDocument();
+    // the cashier may still cancel an unpaid web order
+    expect(within(sheet).getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
+  });
+});

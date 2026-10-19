@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { CUSTOMER_EMAIL_MAX, normaliseQatarPhone, OTP_CODE_PATTERN } from '../../../../shared/shop';
 import { ORDER_MAX_LINES } from '../../../../shared/validation';
 import { CustomerName, OrderLineDto } from '../../orders/dto/orders.dto';
@@ -18,10 +18,6 @@ const QatarPhone = () => (target: object, key: string) => {
 export class SendOtpDto {
   @QatarPhone()
   phone: string;
-
-  @IsOptional()
-  @IsIn(['ar', 'en'])
-  locale?: 'ar' | 'en';
 }
 
 export class VerifyOtpDto {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import type { OrderStatusName, RoleName } from "@/lib/api/types";
+import type { OrderStatusName, PaymentStatusName, RoleName } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const STATUS_CLASS: Record<OrderStatusName, string> = {
@@ -17,6 +17,15 @@ export function OrderStatusBadge({ status }: { status: OrderStatusName }) {
       {t(status)}
     </span>
   );
+}
+
+/**
+ * A web order's payment next to its status: PAID (success) or "Collected"
+ * (neutral) once handed over, PENDING "Awaiting payment" (warning), REFUNDED
+ * (neutral); NONE (showroom orders) renders nothing.
+ */
+export function PaymentBadge({ status, collected }: { status: PaymentStatusName; collected?: boolean }) {
+  throw new Error(`TODO(phase1): PaymentBadge(${status}, ${String(collected)})`);
 }
 
 export function RoleBadge({ role }: { role: RoleName }) {
