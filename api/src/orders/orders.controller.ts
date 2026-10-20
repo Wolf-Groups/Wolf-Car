@@ -64,4 +64,13 @@ export class OrdersController {
   collect(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.orders.collect(user, id);
   }
+
+  /** Sends a paid web order to Odoo again on the next tick (after its outbox row failed). */
+  @RequirePermissions('order.odoo.retry')
+  @Audit('order.odoo_retry', { entity: 'Order', idParam: 'id' })
+  @Post(':id/odoo/retry')
+  @HttpCode(200)
+  retryOdoo(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.retryOdoo(user, id);
+  }
 }

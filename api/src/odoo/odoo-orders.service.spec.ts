@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { mock, mockDeep } from 'jest-mock-extended';
 import type { Env } from '../config/env';
@@ -239,6 +239,54 @@ describe('OdooOrdersService', () => {
       expect(lastError.length).toBeLessThanOrEqual(600);
     });
 
+    it('never sells a refunded order in Odoo: the row fails with ORDER_REFUNDED, Odoo untouched', async () => {
+      // a cancel that lost the race with settle refunded the card after the order was queued
+      const row = { ...outboxRow({ attempts: 2 }), order: { ...orderRow(), paymentStatus: 'REFUNDED' } };
+      prisma.odooOutbox.findUnique.mockResolvedValue(row as never);
+      await service.processOne('ob-1');
+      expect(lastWrite()).toEqual({ status: 'FAILED', lastError: 'ORDER_REFUNDED' });
+      expect(writer.searchRead).not.toHaveBeenCalled();
+      expect(writer.create).not.toHaveBeenCalled();
+      expect(writer.call).not.toHaveBeenCalled();
+    });
+
+    it('stores the sale order as soon as Odoo creates it, so a failed confirmation keeps it', async () => {
+      writer.call.mockRejectedValue(new Error('confirm refused'));
+      await service.processOne('ob-1');
+      expect(outboxWrites().map((w) => w.data)).toEqual([
+        { odooPartnerId: 7, odooSaleOrderId: 42 },
+        expect.objectContaining({ attempts: 1, lastError: 'confirm refused' }),
+      ]);
+    });
+
+    it('a later try confirms the sale order it already created instead of creating another', async () => {
+      const row = { ...outboxRow({ attempts: 1, odooPartnerId: 7, odooSaleOrderId: 42 }), order: orderRow() };
+      prisma.odooOutbox.findUnique.mockResolvedValue(row as never);
+      writer.searchRead.mockResolvedValue([{ state: 'draft' }]);
+      await service.processOne('ob-1');
+      expect(writer.searchRead.mock.calls[0].slice(0, 3)).toEqual(['sale.order', [['id', '=', 42]], ['state']]);
+      expect(writer.create).not.toHaveBeenCalled();
+      expect(writer.call.mock.calls[0].slice(0, 3)).toEqual(['sale.order', 'action_confirm', [42]]);
+      expect(lastWrite()).toMatchObject({ status: 'DONE', odooPartnerId: 7, odooSaleOrderId: 42, lastError: null });
+    });
+
+    it('does not confirm twice a sale order an earlier try already confirmed', async () => {
+      const row = { ...outboxRow({ attempts: 1, odooPartnerId: 7, odooSaleOrderId: 42 }), order: orderRow() };
+      prisma.odooOutbox.findUnique.mockResolvedValue(row as never);
+      writer.searchRead.mockResolvedValue([{ state: 'sale' }]);
+      await service.processOne('ob-1');
+      expect(writer.create).not.toHaveBeenCalled();
+      expect(writer.call).not.toHaveBeenCalled();
+      expect(lastWrite()).toMatchObject({ status: 'DONE', odooSaleOrderId: 42 });
+    });
+
+    it('leaves a row that is no longer PENDING alone', async () => {
+      prisma.odooOutbox.findUnique.mockResolvedValue({ ...outboxRow({ status: 'DONE' }), order: orderRow() } as never);
+      await service.processOne('ob-1');
+      expect(outboxWrites()).toHaveLength(0);
+      expect(writer.searchRead).not.toHaveBeenCalled();
+    });
+
     it('fails for good when a product is not in Odoo', async () => {
       jest.mocked(saleOrderValues).mockImplementation(() => {
         throw new OdooMappingError('PRODUCT_NOT_IN_ODOO', ['Floor Mats']);
@@ -325,6 +373,12 @@ describe('OdooOrdersService', () => {
       prisma.odooOutbox.update.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('No record', { code: 'P2025', clientVersion: 'test' }));
       await expect(service.retry('o-9')).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it('leaves a row Odoo already took as it is', async () => {
+      prisma.odooOutbox.findUnique.mockResolvedValue(outboxRow({ status: 'DONE', odooSaleOrderId: 42 }) as never);
+      await service.retry('o-1');
+      expect(outboxWrites()).toHaveLength(0);
+    });
   });
 
   describe('statusFor', () => {
@@ -334,6 +388,11 @@ describe('OdooOrdersService', () => {
       );
       expect(await service.statusFor('o-1')).toEqual({ status: 'DONE', saleOrderId: 42, attempts: 1, lastError: null, nextAttemptAt: '2026-10-18T10:06:00.000Z' });
       expect(prisma.odooOutbox.findUnique.mock.calls[0][0].where).toEqual({ orderId: 'o-1' });
+    });
+
+    it('has no next attempt once the row FAILED', async () => {
+      prisma.odooOutbox.findUnique.mockResolvedValue(outboxRow({ status: 'FAILED', attempts: 24, lastError: 'boom' }) as never);
+      expect(await service.statusFor('o-1')).toEqual({ status: 'FAILED', saleOrderId: null, attempts: 24, lastError: 'boom', nextAttemptAt: null });
     });
 
     it('is null for an order that was never queued (showroom orders)', async () => {
@@ -385,6 +444,34 @@ describe('OdooOrdersService', () => {
       } finally {
         set.mockRestore();
         clear.mockRestore();
+      }
+    });
+
+    it('a tick that fails, at once or later, is logged without the key and never thrown', async () => {
+      const keyed = { get: (k: string) => ({ NODE_ENV: 'production', ODOO_WRITE_API_KEY: 'write-secret-key' })[k] } as unknown as ConfigService<Env, true>;
+      const set = jest.spyOn(global, 'setInterval').mockReturnValue({ unref: jest.fn() } as unknown as NodeJS.Timeout);
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      try {
+        const prod = new TestableOdooOrdersService(prisma, keyed);
+        prod.onModuleInit();
+        const tick = set.mock.calls[0][0] as () => void;
+
+        jest.spyOn(prod, 'processDue').mockRejectedValueOnce(new Error('db down for write-secret-key'));
+        expect(() => tick()).not.toThrow();
+        await new Promise((r) => setImmediate(r));
+        expect(logged).toHaveBeenCalledTimes(1);
+        expect(String(logged.mock.calls[0][0])).toContain('db down');
+        expect(String(logged.mock.calls[0][0])).not.toContain('write-secret-key');
+
+        jest.spyOn(prod, 'processDue').mockImplementationOnce(() => {
+          throw new Error('sync failure');
+        });
+        expect(() => tick()).not.toThrow();
+        expect(String(logged.mock.calls[1][0])).toContain('sync failure');
+        prod.onModuleDestroy();
+      } finally {
+        set.mockRestore();
+        logged.mockRestore();
       }
     });
 

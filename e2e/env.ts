@@ -51,5 +51,8 @@ export function apiEnv(): Record<string, string> {
     WEB_PUBLIC_URL: WEB_URL,
     API_PUBLIC_URL: API_URL,
     TAP_SECRET_KEY: "fake-secret",
+    // the Odoo outbox timer runs here (production mode): it must never write to a real Odoo
+    ODOO_WRITE_LOGIN: "",
+    ODOO_WRITE_API_KEY: "",
   };
 }

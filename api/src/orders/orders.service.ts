@@ -39,7 +39,6 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly trail: AuditTrail,
     private readonly payments: PaymentsService,
-    // the order detail's `odoo` field (statusFor) and the retry route arrive with plan Task 10
     private readonly odooOrders: OdooOrdersService,
   ) {}
 
@@ -75,11 +74,33 @@ export class OrdersService {
     return { items: rows.map(orderSummary), page: q.page, pageSize: q.pageSize, total };
   }
 
-  /** A foreign branch's order is indistinguishable from a missing one (404). */
+  /** A foreign branch's order is indistinguishable from a missing one (404). Web orders carry their Odoo outbox state. */
   async get(user: AuthUser, id: string, scope: Prisma.OrderWhereInput = orderReadScope(user)): Promise<OrderDetail> {
     const row = await this.prisma.order.findFirst({ where: { AND: [{ id }, scope] }, select: ORDER_DETAIL_SELECT });
     if (!row) throw new NotFoundException('Order not found.');
-    return orderDetail(row, await branchBarcodeBases(this.prisma, row.branch.id));
+    const [bases, odoo] = await Promise.all([
+      branchBarcodeBases(this.prisma, row.branch.id),
+      row.source === 'WEB' ? this.odooOrders.statusFor(row.id) : null,
+    ]);
+    return orderDetail(row, bases, odoo);
+  }
+
+  /**
+   * Finance's "Retry" on a paid web order Odoo has not taken yet: its outbox
+   * row goes back to PENDING, due now, and the next tick sends it. 404 outside
+   * the caller's read scope, or when the order was never queued (showroom
+   * orders); an order already in Odoo is left as it is.
+   */
+  async retryOdoo(user: AuthUser, id: string): Promise<OrderDetail> {
+    const before = await this.get(user, id);
+    await this.odooOrders.retry(id);
+    const after = await this.get(user, id);
+    this.trail
+      .setEntity('Order', id)
+      .setBranch(after.branch.id)
+      .setChange({ odooStatus: before.odoo?.status ?? null }, { odooStatus: after.odoo?.status ?? null })
+      .addMetadata({ code: after.code });
+    return after;
   }
 
   /**

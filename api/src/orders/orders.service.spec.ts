@@ -379,5 +379,35 @@ describe('OrdersService', () => {
       prisma.order.findFirst.mockResolvedValue(null);
       await expect(service.collect(cashier, 'o-bo')).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it('the detail carries the Odoo outbox state of a web order; a showroom order never asks', async () => {
+      const odoo = { status: 'PENDING' as const, saleOrderId: null, attempts: 1, lastError: 'boom', nextAttemptAt: '2026-10-18T10:06:00.000Z' };
+      odooOrders.statusFor.mockResolvedValue(odoo);
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      expect((await service.get(admin, 'o-1')).odoo).toEqual(odoo);
+      expect(odooOrders.statusFor).toHaveBeenCalledWith('o-1');
+
+      odooOrders.statusFor.mockClear();
+      prisma.order.findFirst.mockResolvedValue(orderRow('CONFIRMED') as never);
+      expect((await service.get(admin, 'o-1')).odoo).toBeNull();
+      expect(odooOrders.statusFor).not.toHaveBeenCalled();
+    });
+
+    it('retryOdoo: queues the row again and answers the detail; 404 outside the read scope, before touching the outbox', async () => {
+      const finance = authUser({ id: 'u-fin', username: 'finance', role: 'FINANCE', branchId: null }, ['order.read.all', 'order.odoo.retry']);
+      odooOrders.statusFor.mockResolvedValueOnce({ status: 'FAILED', saleOrderId: null, attempts: 1, lastError: 'PRODUCT_NOT_IN_ODOO: Floor Mats', nextAttemptAt: null });
+      odooOrders.statusFor.mockResolvedValueOnce({ status: 'PENDING', saleOrderId: null, attempts: 1, lastError: null, nextAttemptAt: '2026-10-18T10:06:00.000Z' });
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      const after = await service.retryOdoo(finance, 'o-1');
+      expect(odooOrders.retry).toHaveBeenCalledWith('o-1');
+      expect(after.odoo).toMatchObject({ status: 'PENDING', lastError: null });
+      expect(trail.setEntity).toHaveBeenCalledWith('Order', 'o-1');
+      expect(trail.setChange).toHaveBeenCalledWith({ odooStatus: 'FAILED' }, { odooStatus: 'PENDING' });
+
+      odooOrders.retry.mockClear();
+      prisma.order.findFirst.mockResolvedValue(null);
+      await expect(service.retryOdoo(cashier, 'o-bo')).rejects.toBeInstanceOf(NotFoundException);
+      expect(odooOrders.retry).not.toHaveBeenCalled();
+    });
   });
 });
