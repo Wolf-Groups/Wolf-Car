@@ -104,7 +104,9 @@ Checked on developers.tap.company on 2026-10-18.
   `reference.idempotent` (our payment id), `threeDSecure: true`,
   `description`. The response is a charge with `id = "chg_…"`, `status`
   (`INITIATED` at first) and `transaction.url` to send the payer to.
-- `GET /v2/charges/{id}` reads a charge back. `POST /v2/refunds` with
+- `GET /v2/charges/{id}` reads a charge back. An unknown id answers HTTP 400
+  with `errors[0].code = "1144"` ("Charge id not found"), not 404; a bad key
+  answers 401 with code `2104` (checked against the sandbox on 2026-10-20). `POST /v2/refunds` with
   `charge_id`, `amount`, `currency`, `reason` refunds one.
 - Webhook: HTTP POST of the charge object, header `hashstring` =
   HMAC-SHA256 (hex) with the **secret key** over
