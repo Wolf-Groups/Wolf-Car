@@ -48,6 +48,8 @@ export function apiEnv(): Record<string, string> {
     PAYMENTS_PROVIDER: "fake",
     SMS_PROVIDER: "console",
     OTP_DEV_CODE_IN_RESPONSE: "true",
+    // the API refuses both of the above in production unless told this is the test run
+    ALLOW_TEST_CHECKOUT: "true",
     WEB_PUBLIC_URL: WEB_URL,
     API_PUBLIC_URL: API_URL,
     TAP_SECRET_KEY: "fake-secret",

@@ -163,7 +163,7 @@ Online checkout (all optional locally; see *Payments (Tap)* for what production 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PAYMENTS_PROVIDER` | `tap` | `tap` or `fake`. `fake` is an in-memory gateway for tests and local trials. **Never in production**: its webhook accepts signatures made with the public secret `fake-secret` |
+| `PAYMENTS_PROVIDER` | `tap` | `tap` or `fake`. `fake` is an in-memory gateway for tests and local trials. **Never in production**: its webhook accepts signatures made with the public secret `fake-secret`. The API refuses `fake` with `NODE_ENV=production` (unless `ALLOW_TEST_CHECKOUT=true`) and always next to an `sk_live_` key |
 | `TAP_SECRET_KEY` | — | Tap secret key, `sk_test_…` while testing and `sk_live_…` in production. Never logged. Required with `PAYMENTS_PROVIDER=tap` |
 | `TAP_API_URL` | `https://api.tap.company/v2` | Tap's API |
 | `WEB_PUBLIC_URL` | — | The website's public origin, no trailing slash. Tap sends the customer back here after 3-D Secure |
@@ -171,7 +171,8 @@ Online checkout (all optional locally; see *Payments (Tap)* for what production 
 | `WEB_ORDERS_BRANCH_CODE` | `BO` | Code of the branch that holds website orders for pickup (Bin Omran) |
 | `CHECKOUT_TTL_MINUTES` | `30` | How long an unpaid website order is kept before it expires. An order with a payment in flight is not expired |
 | `SMS_PROVIDER` | `console` | How sign-in codes are sent. Only `console` exists today: it writes the code to the API log |
-| `OTP_DEV_CODE_IN_RESPONSE` | `false` | Return the code in the API response. Development and tests only; the API refuses to start with `true` next to an `sk_live_` key |
+| `OTP_DEV_CODE_IN_RESPONSE` | `false` | Return the code in the API response. Development and tests only; the API refuses to start with `true` in production (unless `ALLOW_TEST_CHECKOUT=true`) and always next to an `sk_live_` key |
+| `ALLOW_TEST_CHECKOUT` | `false` | Lets an API running with `NODE_ENV=production` use `PAYMENTS_PROVIDER=fake` and `OTP_DEV_CODE_IN_RESPONSE=true`. Only the browser tests set it (`e2e/env.ts`); the Docker API in `docker-compose.yml` also runs as production, so a local trial with `fake` there needs it. Never on the server, and refused next to an `sk_live_` key |
 | `OTP_PER_PHONE_PER_15_MIN` | `3` | Codes one phone number may ask for in 15 minutes |
 | `CUSTOMER_SESSION_TTL_DAYS` | `30` | Customer sign-in lifetime |
 | `ODOO_WRITE_LOGIN` / `ODOO_WRITE_API_KEY` | — | A **separate** Odoo user that creates sale orders for paid web orders (the catalogue sync uses the read-only `ODOO_LOGIN`). Empty = paid orders wait in the queue |
@@ -367,7 +368,7 @@ Server (`deploy/api.prod.env`, see `deploy/api.prod.env.example`):
 - [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` for the **web** process. It is not an API setting, and `compose.prod.yml` does not pass it to the web container yet: add it there (and check whether it is needed at build time) before the first live test.
 - [ ] Run one API process. The Odoo queue and the expiry sweep run inside it.
 
-**Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `SMS_PROVIDER=console` with real customers. The API refuses `OTP_DEV_CODE_IN_RESPONSE=true` next to an `sk_live_` key, but not next to `fake`.
+**Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `ALLOW_TEST_CHECKOUT=true`, `SMS_PROVIDER=console` with real customers. With `NODE_ENV=production` the API refuses to start with `fake` or `OTP_DEV_CODE_IN_RESPONSE=true` unless `ALLOW_TEST_CHECKOUT=true`, and refuses both next to an `sk_live_` key whatever the flag says.
 
 Check in the Tap sandbox before launch (the fake gateway cannot tell you):
 

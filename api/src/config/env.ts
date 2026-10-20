@@ -201,6 +201,14 @@ export class Env {
   @IsBoolean()
   OTP_DEV_CODE_IN_RESPONSE = false;
 
+  /**
+   * Lets a production-mode API run the test checkout (the fake gateway, echoed
+   * sign-in codes). Only the browser tests set it; never next to a live Tap key.
+   */
+  @Transform(toBool)
+  @IsBoolean()
+  ALLOW_TEST_CHECKOUT = false;
+
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -244,10 +252,32 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${details}`);
   }
-  if (env.OTP_DEV_CODE_IN_RESPONSE && env.TAP_SECRET_KEY?.startsWith('sk_live_')) {
-    throw new Error('Invalid environment configuration:\n  - OTP_DEV_CODE_IN_RESPONSE: must be false when TAP_SECRET_KEY is a live key');
+  const testCheckout = testCheckoutErrors(env);
+  if (testCheckout.length > 0) {
+    throw new Error(`Invalid environment configuration:\n${testCheckout.map((e) => `  - ${e}`).join('\n')}`);
   }
   return env;
+}
+
+/**
+ * The test checkout (the fake gateway, whose webhook trusts the public secret
+ * `fake-secret`, and sign-in codes echoed to the page) must never take real
+ * customers: refused next to a live Tap key always, and in production unless
+ * ALLOW_TEST_CHECKOUT says this is the browser-test run.
+ */
+function testCheckoutErrors(env: Env): string[] {
+  const errors: string[] = [];
+  const liveKey = env.TAP_SECRET_KEY?.startsWith('sk_live_') ?? false;
+  const productionWithoutPermit = env.NODE_ENV === 'production' && !env.ALLOW_TEST_CHECKOUT;
+  if (env.PAYMENTS_PROVIDER === 'fake') {
+    if (liveKey) errors.push('PAYMENTS_PROVIDER: must not be fake when TAP_SECRET_KEY is a live key');
+    else if (productionWithoutPermit) errors.push('PAYMENTS_PROVIDER: must not be fake in production (ALLOW_TEST_CHECKOUT is for the browser tests only)');
+  }
+  if (env.OTP_DEV_CODE_IN_RESPONSE) {
+    if (liveKey) errors.push('OTP_DEV_CODE_IN_RESPONSE: must be false when TAP_SECRET_KEY is a live key');
+    else if (productionWithoutPermit) errors.push('OTP_DEV_CODE_IN_RESPONSE: must be false in production (ALLOW_TEST_CHECKOUT is for the browser tests only)');
+  }
+  return errors;
 }
 
 export function corsOrigins(env: Pick<Env, 'CORS_ORIGINS'>): string[] {

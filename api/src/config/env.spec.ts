@@ -78,6 +78,52 @@ describe('validateEnv', () => {
       expect(phase1({ ...base, OTP_DEV_CODE_IN_RESPONSE: 'true', TAP_SECRET_KEY: 'sk_test_x' }).OTP_DEV_CODE_IN_RESPONSE).toBe(true);
     });
 
+    describe('test checkout never runs in production', () => {
+      const prod = { ...base, NODE_ENV: 'production' };
+
+      it('refuses the fake gateway in production', () => {
+        expect(() => validateEnv({ ...prod, PAYMENTS_PROVIDER: 'fake' })).toThrow('PAYMENTS_PROVIDER');
+      });
+
+      it('refuses echoed sign-in codes in production', () => {
+        expect(() => validateEnv({ ...prod, OTP_DEV_CODE_IN_RESPONSE: 'true' })).toThrow('OTP_DEV_CODE_IN_RESPONSE');
+      });
+
+      it('allows both in production when ALLOW_TEST_CHECKOUT is set (the browser tests)', () => {
+        const env = validateEnv({ ...prod, PAYMENTS_PROVIDER: 'fake', OTP_DEV_CODE_IN_RESPONSE: 'true', TAP_SECRET_KEY: 'fake-secret', ALLOW_TEST_CHECKOUT: 'true' });
+        expect(env.PAYMENTS_PROVIDER).toBe('fake');
+        expect(env.OTP_DEV_CODE_IN_RESPONSE).toBe(true);
+        expect(env.ALLOW_TEST_CHECKOUT).toBe(true);
+      });
+
+      it('defaults ALLOW_TEST_CHECKOUT to false and reads "false" as false', () => {
+        expect(validateEnv(base).ALLOW_TEST_CHECKOUT).toBe(false);
+        expect(() => validateEnv({ ...prod, PAYMENTS_PROVIDER: 'fake', ALLOW_TEST_CHECKOUT: 'false' })).toThrow('PAYMENTS_PROVIDER');
+      });
+
+      it('allows the real gateway in production', () => {
+        expect(validateEnv({ ...prod, PAYMENTS_PROVIDER: 'tap', TAP_SECRET_KEY: 'sk_live_x' }).PAYMENTS_PROVIDER).toBe('tap');
+      });
+
+      it('allows the fake gateway and echoed codes outside production', () => {
+        expect(validateEnv({ ...base, NODE_ENV: 'test', PAYMENTS_PROVIDER: 'fake', OTP_DEV_CODE_IN_RESPONSE: 'true' }).PAYMENTS_PROVIDER).toBe('fake');
+        expect(validateEnv({ ...base, NODE_ENV: 'development', PAYMENTS_PROVIDER: 'fake', OTP_DEV_CODE_IN_RESPONSE: 'true' }).OTP_DEV_CODE_IN_RESPONSE).toBe(true);
+      });
+
+      it.each([
+        ['in development', { NODE_ENV: 'development' }],
+        ['in production with ALLOW_TEST_CHECKOUT', { NODE_ENV: 'production', ALLOW_TEST_CHECKOUT: 'true' }],
+      ])('always refuses the fake gateway next to a live Tap key (%s)', (_label, patch) => {
+        expect(() => validateEnv({ ...base, ...patch, PAYMENTS_PROVIDER: 'fake', TAP_SECRET_KEY: 'sk_live_x' })).toThrow('PAYMENTS_PROVIDER');
+      });
+
+      it('always refuses echoed codes next to a live Tap key, even with ALLOW_TEST_CHECKOUT', () => {
+        expect(() =>
+          validateEnv({ ...prod, ALLOW_TEST_CHECKOUT: 'true', OTP_DEV_CODE_IN_RESPONSE: 'true', TAP_SECRET_KEY: 'sk_live_x' }),
+        ).toThrow('OTP_DEV_CODE_IN_RESPONSE');
+      });
+    });
+
     it('reads OTP_DEV_CODE_IN_RESPONSE=false as false', () => {
       expect(phase1({ ...base, OTP_DEV_CODE_IN_RESPONSE: 'false' }).OTP_DEV_CODE_IN_RESPONSE).toBe(false);
       expect(() => validateEnv({ ...base, OTP_DEV_CODE_IN_RESPONSE: 'false', TAP_SECRET_KEY: 'sk_live_x' })).not.toThrow();
