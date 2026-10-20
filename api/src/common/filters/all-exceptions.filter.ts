@@ -13,6 +13,8 @@ export interface ErrorBody {
   retryAfterSeconds?: number;
   /** PRODUCT_UNAVAILABLE: the basket lines the client should drop. */
   productIds?: string[];
+  /** PAYMENT_FAILED (402) and REFUND_FAILED (502): the payment provider's error code. */
+  reason?: string;
   requestId?: string;
 }
 
@@ -83,6 +85,7 @@ export function describeError(exception: unknown): ErrorBody {
       ...(r.errors ? { errors: r.errors } : {}),
       ...(typeof r.retryAfterSeconds === 'number' ? { retryAfterSeconds: r.retryAfterSeconds } : {}),
       ...(isStringArray(r.productIds) ? { productIds: r.productIds } : {}),
+      ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
     };
   }
   if (isMulterError(exception)) {

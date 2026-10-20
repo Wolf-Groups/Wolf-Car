@@ -13,7 +13,7 @@ import { WEB_ORDER_SELECT, webOrderView, type WebOrderView } from './web-order.v
 
 const MINUTE_MS = 60_000;
 
-const checkoutUnavailable = () =>
+export const checkoutUnavailable = () =>
   new ServiceUnavailableException({
     statusCode: 503,
     error: 'Service Unavailable',
@@ -21,7 +21,7 @@ const checkoutUnavailable = () =>
     message: 'Online checkout is not available right now.',
   });
 
-const orderNotFound = () => new NotFoundException('Order not found.');
+export const orderNotFound = () => new NotFoundException('Order not found.');
 
 /**
  * Web orders: created from the basket with the server's prices, for pickup at

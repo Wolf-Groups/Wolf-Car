@@ -84,9 +84,12 @@ export class AuditTrail {
 
   /**
    * Records the entry as a FAILURE (metadata.reason = reason) although the
-   * handler returns normally, e.g. a webhook we must answer 200. Plan Task 6.
+   * handler returns normally, e.g. a webhook we must answer 200.
    */
   markFailure(reason: string): this {
-    throw new Error(`TODO(phase1): AuditTrail.markFailure ${reason}`);
+    const s = this.state();
+    s.outcome = 'FAILURE';
+    s.metadata = { ...s.metadata, reason };
+    return this;
   }
 }

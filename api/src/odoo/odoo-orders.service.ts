@@ -50,9 +50,13 @@ export class OdooOrdersService implements OnModuleInit, OnModuleDestroy {
     return todo('OdooOrdersService.writer', this.config);
   }
 
-  /** Upserts the outbox row for a freshly paid order (called inside the settle transaction). */
-  enqueue(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
-    return todo('OdooOrdersService.enqueue', tx, orderId);
+  /** Upserts the outbox row for a freshly paid order (called inside the settle transaction). A row that exists is left as it is. */
+  async enqueue(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+    await tx.odooOutbox.upsert({
+      where: { orderId },
+      create: { orderId, status: 'PENDING', nextAttemptAt: new Date() },
+      update: {},
+    });
   }
 
   /** Processes PENDING rows whose nextAttemptAt has passed (oldest first, up to 20). Returns how many were tried. Never runs twice at once. */

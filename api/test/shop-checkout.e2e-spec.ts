@@ -202,8 +202,7 @@ describe('Online checkout (e2e)', () => {
     });
   });
 
-  // flipped to describe in Task 6
-  describe.skip('payment', () => {
+  describe('payment', () => {
     it('pays with the test token: the answer is the return page and the attempt is open', async () => {
       const order = await createOk();
       const res = await payWebOrder(t, sara, order.id, FAKE_TOKENS.ok, 'en');
@@ -311,8 +310,7 @@ describe('Online checkout (e2e)', () => {
     });
   });
 
-  // flipped to describe in Task 6
-  describe.skip('webhook', () => {
+  describe('webhook', () => {
     it('a signed CAPTURED webhook confirms and pays the order, and a second delivery changes nothing', async () => {
       const order = await createOk();
       await payWebOrder(t, sara, order.id);
