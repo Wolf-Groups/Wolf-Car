@@ -10,11 +10,7 @@ import { PaymentsController } from './payments/payments.controller';
 import { PaymentsModule } from './payments/payments.module';
 import { ConsoleSmsSender, SMS_SENDER } from './sms/sms-sender';
 
-/**
- * The website's online checkout: customer sign-in, orders, payments.
- * Registered in AppModule by Task 4 of the plan (it is not yet, so the stubbed
- * routes do not exist at runtime until then).
- */
+/** The website's online checkout: customer sign-in, orders, payments. */
 @Module({
   imports: [PaymentsModule],
   controllers: [ShopAuthController, CheckoutController, PaymentsController],

@@ -70,15 +70,25 @@ export class TokenService {
   /**
    * The website customer's cookie token: sub = customer id, ver = the
    * customer's sessionVersion (a bump signs every device out), valid
-   * CUSTOMER_SESSION_TTL_DAYS. Implemented in Task 4 of the online-checkout plan.
+   * CUSTOMER_SESSION_TTL_DAYS. Its audience is rejected by verifyAccess, so it
+   * never opens a dashboard or showroom route.
    */
-  signCustomer(customerId: string, version: number): Promise<{ token: string; expiresAt: Date }> {
-    throw new Error(`TODO(phase1): TokenService.signCustomer ${customerId} ${version}`);
+  async signCustomer(customerId: string, version: number): Promise<{ token: string; expiresAt: Date }> {
+    const ttlSeconds = this.config.get('CUSTOMER_SESSION_TTL_DAYS', { infer: true }) * 86_400;
+    const token = await this.jwt.signAsync({ sub: customerId, ver: version }, { audience: CUSTOMER_AUDIENCE, expiresIn: ttlSeconds });
+    return { token, expiresAt: new Date(Date.now() + ttlSeconds * 1000) };
   }
 
   /** Throws AuthFailedException('SESSION_EXPIRED') for anything but a valid customer token. */
-  verifyCustomer(token: string): Promise<{ sub: string; ver: number }> {
-    throw new Error(`TODO(phase1): TokenService.verifyCustomer ${token.length}`);
+  async verifyCustomer(token: string): Promise<{ sub: string; ver: number }> {
+    let payload: { sub?: unknown; ver?: unknown };
+    try {
+      payload = await this.jwt.verifyAsync<{ sub?: unknown; ver?: unknown }>(token, { audience: CUSTOMER_AUDIENCE });
+    } catch {
+      throw new AuthFailedException('SESSION_EXPIRED');
+    }
+    if (typeof payload.sub !== 'string' || typeof payload.ver !== 'number') throw new AuthFailedException('SESSION_EXPIRED');
+    return { sub: payload.sub, ver: payload.ver };
   }
 
   /** Short-lived token proving the password step succeeded; exchanged for a session after TOTP. */

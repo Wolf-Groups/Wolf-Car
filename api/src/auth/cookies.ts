@@ -76,19 +76,27 @@ export function readSlotsCookie(req: Request): string | undefined {
 /**
  * Website customers (online checkout): a signed token in an httpOnly cookie
  * scoped to /api/shop, like the sales-slots cookie; no refresh rotation.
- * Implemented in Task 4 of docs/superpowers/plans/2026-10-18-online-checkout-phase1.md.
+ * The readable hint on "/" only tells the website a session probably exists.
  */
 export const CUSTOMER_COOKIE = { name: 'wc_cst', path: '/api/shop' };
 export const CUSTOMER_HINT_COOKIE = 'wc_customer';
 
+function customerOptions(secure: boolean, expires?: Date): CookieOptions {
+  return { httpOnly: true, secure, sameSite: 'strict', path: CUSTOMER_COOKIE.path, ...(expires ? { expires } : {}) };
+}
+
 export function setCustomerCookie(res: Response, token: string, expires: Date, secure: boolean): void {
-  throw new Error(`TODO(phase1): setCustomerCookie ${String([res && 1, token.length, expires, secure])}`);
+  res.cookie(CUSTOMER_COOKIE.name, token, customerOptions(secure, expires));
+  res.cookie(CUSTOMER_HINT_COOKIE, '1', hintOptions(secure, expires));
 }
 
 export function clearCustomerCookie(res: Response, secure: boolean): void {
-  throw new Error(`TODO(phase1): clearCustomerCookie ${String([res && 1, secure])}`);
+  res.clearCookie(CUSTOMER_COOKIE.name, customerOptions(secure));
+  res.clearCookie(CUSTOMER_HINT_COOKIE, hintOptions(secure));
 }
 
 export function readCustomerCookie(req: Request): string | undefined {
-  throw new Error(`TODO(phase1): readCustomerCookie ${String(req && 1)}`);
+  const cookies = (req as Request & { cookies?: Record<string, unknown> }).cookies;
+  const value = cookies?.[CUSTOMER_COOKIE.name];
+  return typeof value === 'string' && value.length > 0 && value.length < 1000 ? value : undefined;
 }

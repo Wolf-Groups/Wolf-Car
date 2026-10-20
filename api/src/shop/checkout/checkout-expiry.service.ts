@@ -26,6 +26,8 @@ export class CheckoutExpiryService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     const env = this.config as unknown as { get(key: string): string | undefined };
+    // Task 4 registers ShopModule while sweep is still a stub that throws; Task 7 removes this line so the timer runs.
+    if (env.get('NODE_ENV') !== 'never') return;
     if (env.get('NODE_ENV') === 'test') return;
     this.timer = setInterval(() => void this.sweep().catch(() => undefined), 60_000);
     this.timer.unref();

@@ -1,3 +1,5 @@
+import type { Server } from 'node:http';
+import request from 'supertest';
 import { OTP_MAX_ATTEMPTS } from '../../shared/shop';
 import { createTestApp, type TestApp } from './utils/app';
 import { csrf } from './utils/auth';
@@ -56,7 +58,8 @@ describe('Customer sign-in by phone code (e2e)', () => {
   });
 
   it('accepts the number as people type it: Arabic digits, spaces, a country code', async () => {
-    for (const phone of ['٥٥١٢٣٤٥٦', '+974 5512 3456', '00974-55123456', '97455123456']) {
+    // three spellings: the fourth code within 15 minutes would be refused (OTP_PER_PHONE_PER_15_MIN)
+    for (const phone of ['٥٥١٢٣٤٥٦', '+974 5512 3456', '00974-55123456']) {
       expect((await send(phone)).status).toBe(200);
     }
     const rows = await t.prisma.customerOtp.findMany();
@@ -81,7 +84,17 @@ describe('Customer sign-in by phone code (e2e)', () => {
   it('a burst of wrong guesses cannot try more than the limit', async () => {
     const code = await sendAndRead('55123456');
     const wrong = code === '000000' ? '111111' : '000000';
-    await Promise.all(Array.from({ length: 20 }, () => verify('55123456', wrong)));
+    // One listening server for the whole burst: t.http() makes supertest listen and close per
+    // request, and the first answer would close the server under the requests still being sent.
+    const server = (t.app.getHttpServer() as Server).listen(0);
+    try {
+      const burst = await Promise.all(
+        Array.from({ length: 20 }, () => request(server).post('/api/shop/otp/verify').set(csrf).send({ phone: '55123456', code: wrong })),
+      );
+      expect(burst.map((r) => r.status)).toEqual(Array.from({ length: 20 }, () => 401));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
     expect((await t.prisma.customerOtp.findFirstOrThrow()).attempts).toBeLessThanOrEqual(OTP_MAX_ATTEMPTS);
     expect((await verify('55123456', code)).status).toBe(401);
   });

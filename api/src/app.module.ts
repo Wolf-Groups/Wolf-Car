@@ -28,6 +28,7 @@ import { SalesAccessModule } from './sales-access/sales-access.module';
 import { ReceiptsModule } from './receipts/receipts.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { ServicesModule } from './services/services.module';
+import { ShopModule } from './shop/shop.module';
 import { ShowroomModule } from './showroom/showroom.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -101,6 +102,7 @@ type IdRequest = IncomingMessage & { id?: string };
     ReservationsModule,
     ReceiptsModule,
     PublicModule,
+    ShopModule,
     AnalyticsModule,
   ],
   controllers: [HealthController],
