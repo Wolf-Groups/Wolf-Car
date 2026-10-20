@@ -57,6 +57,14 @@ export class ReceiptsService implements OnModuleInit {
         branch: order.branch,
         cashier: order.confirmedBy?.displayName ?? null,
         items: order.items,
+        online:
+          order.source === 'WEB'
+            ? {
+                paid: order.paymentStatus === 'PAID',
+                paidAt: order.paidAt ? new Date(order.paidAt) : null,
+                chargeId: order.payment?.chargeId ?? null,
+              }
+            : null,
       },
       locale,
       this.assets as ReceiptAssets,

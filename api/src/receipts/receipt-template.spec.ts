@@ -67,6 +67,48 @@ describe('receipt template', () => {
     expect(formatMoney('1118.5', 'QAR', 'ar')).toMatch(/1,118\.50/);
   });
 
+  describe('a web order paid online', () => {
+    const web: ReceiptData = {
+      ...data,
+      online: { paid: true, paidAt: new Date('2026-09-21T10:05:00Z'), chargeId: 'chg_TS05A4120230736x9K22710693' },
+    };
+
+    it('says it is paid by card and that nothing is collected at the till, with the paid date and the end of the charge id', () => {
+      const html = renderReceiptHtml(web, 'en', assets);
+      expect(html).toContain('Paid online by card — nothing to collect at the till');
+      expect(html).toContain(formatDate(new Date('2026-09-21T10:05:00Z'), 'en'));
+      expect(html).toContain('22710693');
+      expect(html).not.toContain('chg_TS05A4120230736x9K22710693');
+    });
+
+    it('says it in Arabic on the Arabic receipt', () => {
+      const html = renderReceiptHtml(web, 'ar', assets);
+      expect(html).toContain('مدفوع أونلاين بالبطاقة — لا يُحصَّل أي مبلغ عند الكاشير');
+      expect(html).toContain(formatDate(new Date('2026-09-21T10:05:00Z'), 'ar'));
+      expect(html).toContain('22710693');
+    });
+
+    it('prints no scannable bars, so its parts are not rung up at the till again', () => {
+      for (const locale of ['en', 'ar'] as const) {
+        const html = renderReceiptHtml(web, locale, assets);
+        expect(html).not.toContain('class="bc"');
+        expect(html).not.toContain('<svg');
+      }
+    });
+
+    it('prints no bars for any web order, and the paid line only when it is paid', () => {
+      const unpaid = renderReceiptHtml({ ...data, online: { paid: false, paidAt: null, chargeId: null } }, 'en', assets);
+      expect(unpaid).not.toContain('class="bc"');
+      expect(unpaid).not.toContain('nothing to collect');
+    });
+
+    it('leaves showroom receipts as they were', () => {
+      const html = renderReceiptHtml(data, 'en', assets);
+      expect(html).not.toContain('nothing to collect');
+      expect(html).toContain('class="bc"');
+    });
+  });
+
   it('formats dates in Qatar time', () => {
     expect(formatDate(new Date('2026-09-21T22:30:00Z'), 'en')).toContain('Sep 22, 2026');
   });
