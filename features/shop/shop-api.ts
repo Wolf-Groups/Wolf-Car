@@ -1,5 +1,5 @@
+import { toApiError } from "@/lib/api/client";
 import type { CustomerProfile, WebOrder } from "@/lib/api/types";
-import { todo } from "./todo";
 
 /**
  * The website's checkout has no staff token: the API reads the httpOnly
@@ -15,11 +15,23 @@ export interface ShopRequestOptions {
 
 /** Set by the API next to the httpOnly cookie; only says "this browser probably has a customer session". */
 export function hasCustomerHint(): boolean {
-  return todo("hasCustomerHint");
+  return typeof document !== "undefined" && document.cookie.split("; ").some((c) => c.startsWith("wc_customer="));
 }
 
+const CSRF = { "X-Requested-With": "wolfcar" };
+
 export async function shopApi<T>(path: string, options: ShopRequestOptions = {}): Promise<T> {
-  return todo("shopApi", path, options);
+  const headers: Record<string, string> = { ...CSRF, ...options.headers };
+  if (options.json !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(`/api/shop${path}`, {
+    method: options.method ?? "GET",
+    headers,
+    body: options.json !== undefined ? JSON.stringify(options.json) : undefined,
+    credentials: "same-origin",
+  });
+  if (!res.ok) throw await toApiError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
 }
 
 export interface CreateOrderBody {
@@ -30,30 +42,30 @@ export interface CreateOrderBody {
 
 export const shop = {
   sendOtp(phone: string): Promise<{ expiresAt: string; devCode?: string }> {
-    return todo("shop.sendOtp", phone);
+    return shopApi("/otp", { method: "POST", json: { phone } });
   },
   verifyOtp(phone: string, code: string): Promise<{ customer: CustomerProfile; expiresAt: string }> {
-    return todo("shop.verifyOtp", phone, code);
+    return shopApi("/otp/verify", { method: "POST", json: { phone, code } });
   },
   me(): Promise<CustomerProfile> {
-    return todo("shop.me");
+    return shopApi("/me");
   },
   logout(): Promise<void> {
-    return todo("shop.logout");
+    return shopApi("/logout", { method: "POST" });
   },
   createOrder(body: CreateOrderBody, idempotencyKey: string): Promise<WebOrder & { replayed: boolean }> {
-    return todo("shop.createOrder", body, idempotencyKey);
+    return shopApi("/orders", { method: "POST", json: body, headers: { "Idempotency-Key": idempotencyKey } });
   },
   getOrder(id: string): Promise<WebOrder> {
-    return todo("shop.getOrder", id);
+    return shopApi(`/orders/${id}`);
   },
   pay(id: string, tokenId: string, locale: "ar" | "en"): Promise<{ redirectUrl: string | null; order: WebOrder }> {
-    return todo("shop.pay", id, tokenId, locale);
+    return shopApi(`/orders/${id}/pay`, { method: "POST", json: { tokenId, locale } });
   },
   reconcile(id: string): Promise<WebOrder> {
-    return todo("shop.reconcile", id);
+    return shopApi(`/orders/${id}/reconcile`, { method: "POST" });
   },
   cancel(id: string): Promise<WebOrder> {
-    return todo("shop.cancel", id);
+    return shopApi(`/orders/${id}/cancel`, { method: "POST" });
   },
 };

@@ -1,5 +1,5 @@
 import type { CustomerProfile, WebOrder } from "@/lib/api/types";
-import { todo } from "./todo";
+import { OTP_RESEND_SECONDS } from "@/shared/shop";
 
 /**
  * The checkout's steps as a pure reducer, so the order of screens is tested
@@ -43,5 +43,23 @@ export type CheckoutEvent =
   | { type: "ERROR"; code: string | null };
 
 export function reduce(state: CheckoutState, event: CheckoutEvent): CheckoutState {
-  return todo("reduce", state, event);
+  if (event.type === "ERROR") return { ...state, error: event.code };
+  const next = { ...state, error: null };
+  switch (event.type) {
+    case "SESSION_FOUND":
+    case "VERIFIED":
+      return { ...next, step: "details", customer: event.customer };
+    case "NO_SESSION":
+      return { ...next, step: "phone" };
+    case "OTP_SENT":
+      return { ...next, step: "code", phone: event.phone, resendAt: event.now + OTP_RESEND_SECONDS * 1000 };
+    case "CHANGE_PHONE":
+      return { ...next, step: "phone", customer: null };
+    case "ORDER_CREATED":
+      return { ...next, step: "pay", order: event.order };
+    case "BACK_TO_DETAILS":
+      return { ...next, step: "details", order: null };
+    case "BUSY":
+      return { ...next, busy: event.busy };
+  }
 }
