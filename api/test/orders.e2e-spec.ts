@@ -312,6 +312,27 @@ describe('Showroom & orders (e2e)', () => {
       expect((await api(tok.ghCashier).list('?source=WEB')).body.total).toBe(0);
     });
 
+    it('an abandoned checkout vanishes from the staff list unless asked for (cancelled or web orders)', async () => {
+      const bo = api(tok.boCashier);
+      expect((await bo.cancel(unpaid.id)).body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'PENDING' });
+      expect((await bo.cancel(showroomBo.id)).body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'NONE' });
+      // expired unpaid, then Tap captured the wrong amount: money was taken, so the order stays in sight
+      const mismatch = (await createWebOrder(t, sara, defaultBasket(world))).body as { id: string; code: string };
+      await payWebOrder(t, sara, mismatch.id);
+      await t.prisma.order.update({ where: { id: mismatch.id }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+      const chargeId = await chargeIdOf(t, mismatch.id);
+      expect((await signedWebhook(t, { ...fakeGateway(t).settle(chargeId, 'CAPTURED'), amount: 100 })).status).toBe(200);
+      expect(await t.prisma.order.findUniqueOrThrow({ where: { id: mismatch.id } })).toMatchObject({ status: 'CANCELLED', paymentStatus: 'PENDING' });
+
+      const all = await bo.list();
+      expect(codes(all)).toEqual([showroomBo.code, paid.code, mismatch.code].sort());
+      expect(all.body.total).toBe(3);
+      expect(codes(await bo.list('?status=CANCELLED'))).toEqual([showroomBo.code, unpaid.code, mismatch.code].sort());
+      expect(codes(await bo.list('?source=WEB'))).toEqual([unpaid.code, paid.code, mismatch.code].sort());
+      expect(codes(await bo.list('?source=SHOWROOM'))).toEqual([showroomBo.code]);
+      expect(codes(await api(tok.finance).list())).toEqual([showroomBo.code, paid.code, mismatch.code].sort());
+    });
+
     it('the BO cashier sees where the order came from and whether it is paid; the GH cashier sees nothing', async () => {
       const bo = api(tok.boCashier);
       // unfiltered: the showroom order is compared too (the source filter has its own case above)

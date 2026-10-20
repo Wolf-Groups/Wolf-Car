@@ -97,6 +97,35 @@ describe('OrdersService', () => {
     expect(where.AND).toContainEqual({ branchId: 'gh' });
   });
 
+  describe('abandoned checkouts (web orders cancelled before any card was charged)', () => {
+    const abandoned = { NOT: { source: 'WEB', status: 'CANCELLED', paymentStatus: 'PENDING', payments: { none: { status: 'CAPTURED' } } } };
+    const whereFor = async (query: Partial<ListOrdersQueryDto>) => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+      await service.list(admin, { page: 1, pageSize: 20, ...query } as ListOrdersQueryDto);
+      const where = prisma.order.findMany.mock.calls[0][0]?.where as { AND: unknown[] };
+      expect(prisma.order.count.mock.calls[0][0]?.where).toEqual(where);
+      return where;
+    };
+
+    it.each([
+      ['no filter', {}],
+      ['the pending filter', { status: 'PENDING' }],
+      ['the confirmed filter', { status: 'CONFIRMED' }],
+      ['showroom orders', { source: 'SHOWROOM' }],
+      ['one day', { from: '2026-10-20', to: '2026-10-20' }],
+    ])('leaves them out by default (%s)', async (_label, query) => {
+      expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).toContainEqual(abandoned);
+    });
+
+    it.each([
+      ['status=CANCELLED', { status: 'CANCELLED' }],
+      ['source=WEB', { source: 'WEB' }],
+    ])('shows them when the list asks for %s', async (_label, query) => {
+      expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).not.toContainEqual(abandoned);
+    });
+  });
+
   it('interprets date-only filters as Qatar calendar days (inclusive)', async () => {
     prisma.order.findMany.mockResolvedValue([]);
     prisma.order.count.mockResolvedValue(0);
