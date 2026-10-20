@@ -5,15 +5,17 @@ This repository contains:
 | Part | Where | What |
 |---|---|---|
 | **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English). Unchanged except for two footer links: **Product catalog** and **Staff login**. |
-| **Public catalog** | `app/[locale]/products` | All products with image, name and description only. Prices and barcodes never leave the API here. |
+| **Public catalog** | `app/[locale]/products` | Products with image, name, description, category and price. Barcodes never leave the API here. Products without a price cannot be bought online; they are ordered on WhatsApp. |
+| **Online checkout** | `app/[locale]/checkout`, `features/shop/`, `api/src/shop/` | A visitor fills a basket, signs in with a one-time code sent to a Qatari mobile, pays by card through Tap and collects the parts at Bin Omran. The paid order is queued for Odoo and shows in the dashboard as *paid online*. See section 11. |
 | **Staff dashboards** | `app/[locale]/(app)/(staff)` | One login for everyone; the account's role decides the landing page. Products, pricing, orders, users, branches, permissions, activity log, account security. |
 | **Showroom kiosk** | `app/[locale]/(app)/showroom` | Touch screen in each branch: customers pick products, staff submits the order. Own login and session. |
-| **API** | `api/` | NestJS 12 + PostgreSQL (Prisma 7). Auth, RBAC, orders, receipts (PDF), audit log. Swagger at `/api/docs`. |
+| **API** | `api/` | NestJS 12 + PostgreSQL (Prisma 7). Auth, RBAC, orders, online payments, Odoo sync, receipts (PDF), audit log. Swagger at `/api/docs`. |
 | **Shared rules** | `shared/` | Permission keys, roles and validation rules used by both the API and the web app. |
 
 ```
 browser ──► Next.js (web, :3000) ──/api/* rewrite──► NestJS API (:4000) ──► PostgreSQL
-                │  landing · catalog · dashboards · showroom      │  auth · RBAC · orders · PDF receipts
+                │  landing · catalog · checkout · dashboards · showroom │  auth · RBAC · orders · PDF receipts
+                                                                  ▲ │ Tap (charges, refunds) · Odoo (catalogue, sale orders)
 ```
 
 The browser only ever talks to the Next.js origin; `/api/*` is proxied to the API, so the auth cookies are first‑party.
@@ -48,7 +50,9 @@ npm run dev                       # http://localhost:3000
 ```
 
 Open http://localhost:3000/ar (Arabic, default) or http://localhost:3000/en.
-Staff sign-in: `/ar/login` · Showroom: `/ar/showroom` · Catalog: `/ar/products`.
+Staff sign-in: `/ar/login` · Showroom: `/ar/showroom` · Catalog: `/ar/products` · Basket and checkout: `/ar/checkout`.
+
+The checkout needs no Tap account to try locally: see *Payments (Tap)* below.
 
 ### Everything in Docker
 
@@ -155,11 +159,32 @@ There is no public registration: the Super Admin creates every account. New acco
 | `UPLOAD_DIR` | `./storage/uploads` | Product images (processed WebP files) |
 | `CHROME_PATH` | — | Chromium for receipts; empty = Playwright's browser |
 
+Online checkout (all optional locally; see *Payments (Tap)* for what production needs):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PAYMENTS_PROVIDER` | `tap` | `tap` or `fake`. `fake` is an in-memory gateway for tests and local trials. **Never in production**: its webhook accepts signatures made with the public secret `fake-secret` |
+| `TAP_SECRET_KEY` | — | Tap secret key, `sk_test_…` while testing and `sk_live_…` in production. Never logged. Required with `PAYMENTS_PROVIDER=tap` |
+| `TAP_API_URL` | `https://api.tap.company/v2` | Tap's API |
+| `WEB_PUBLIC_URL` | — | The website's public origin, no trailing slash. Tap sends the customer back here after 3-D Secure |
+| `API_PUBLIC_URL` | — | The API's public origin, no trailing slash. Tap posts its webhook here. Locally: an ngrok URL |
+| `WEB_ORDERS_BRANCH_CODE` | `BO` | Code of the branch that holds website orders for pickup (Bin Omran) |
+| `CHECKOUT_TTL_MINUTES` | `30` | How long an unpaid website order is kept before it expires. An order with a payment in flight is not expired |
+| `SMS_PROVIDER` | `console` | How sign-in codes are sent. Only `console` exists today: it writes the code to the API log |
+| `OTP_DEV_CODE_IN_RESPONSE` | `false` | Return the code in the API response. Development and tests only; the API refuses to start with `true` next to an `sk_live_` key |
+| `OTP_PER_PHONE_PER_15_MIN` | `3` | Codes one phone number may ask for in 15 minutes |
+| `CUSTOMER_SESSION_TTL_DAYS` | `30` | Customer sign-in lifetime |
+| `ODOO_WRITE_LOGIN` / `ODOO_WRITE_API_KEY` | — | A **separate** Odoo user that creates sale orders for paid web orders (the catalogue sync uses the read-only `ODOO_LOGIN`). Empty = paid orders wait in the queue |
+| `ODOO_WEB_WAREHOUSE_ID` | — | Numeric id of the Odoo warehouse web orders ship from (Bin Omran) |
+| `ODOO_FALLBACK_PRODUCT_ID` | — | Numeric id of the Odoo product used for a line that has no Odoo product of its own |
+
 ### Web
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `API_INTERNAL_URL` | `http://localhost:4000` | Where the Next.js server reaches the API (`/api/*` rewrite and the catalog page). Read at **build** time for the rewrite. |
+| `NEXT_PUBLIC_TAP_PUBLIC_KEY` | — | Tap **public** key for the card form (`pk_test_…`, later `pk_live_…`). Read by the checkout page on the web server. Without it the checkout page shows no card form. Locally: `.env.local` (git-ignored) |
+| `NEXT_PUBLIC_TAP_MERCHANT_ID` | — | Tap merchant id (not secret). Optional, in `.env.local` |
 
 ## 6. Tests
 
@@ -186,9 +211,9 @@ Landing snapshots live in `e2e/landing.spec.ts-snapshots/`. They were checked pi
 What they cover:
 
 - **API unit** — every service, guard, interceptor and filter (auth, tokens, lockout, 2FA, RBAC, users, branches, products, pricing, orders, showroom, receipts, activity log).
-- **API e2e** — the test database's default time zone is set to Asia/Qatar, so the suite also proves timestamps are stored as true UTC instants. Every endpoint for every role: a table-driven **RBAC matrix** checks all routes × {anonymous, Super Admin, Finance, Manager, Cashier, showroom session}. Plus the forbidden paths: Finance editing name/image/barcode/description (403 on the route, 400 for smuggled fields), managers setting prices, cashiers editing confirmed orders (409), cross-branch reads/writes/receipts (404), public catalogue field leakage, 2FA (setup, login, replay, recovery codes, admin reset), rate limiting (429) and lockout (423), refresh-token reuse, upload spoofing/oversize, database constraints (second manager, branch without cashier, append-only log), PPF bookings (at most two full PPF per day, also under concurrent requests; closed days; sales requests for a full PPF or a light job), the PIN-protected sales page (cookie scope, PIN change signs phones out, lockout, no internal fields), general reservations, and an **audit-coverage** test that fails if any state-changing route is not audited.
+- **API e2e** — the test database's default time zone is set to Asia/Qatar, so the suite also proves timestamps are stored as true UTC instants. Every endpoint for every role: a table-driven **RBAC matrix** checks all routes × {anonymous, Super Admin, Finance, Manager, Cashier, showroom session}. Plus the online checkout (sign-in codes, checkout, webhook signatures and repeats, expiry, refunds, the Odoo queue; paid through the fake gateway, see `api/test/setup/test-env.ts`) and the forbidden paths: Finance editing name/image/barcode/description (403 on the route, 400 for smuggled fields), managers setting prices, cashiers editing confirmed orders (409), cross-branch reads/writes/receipts (404), public catalogue field leakage, 2FA (setup, login, replay, recovery codes, admin reset), rate limiting (429) and lockout (423), refresh-token reuse, upload spoofing/oversize, database constraints (second manager, branch without cashier, append-only log), PPF bookings (at most two full PPF per day, also under concurrent requests; closed days; sales requests for a full PPF or a light job), the PIN-protected sales page (cookie scope, PIN change signs phones out, lockout, no internal fields), general reservations, and an **audit-coverage** test that fails if any state-changing route is not audited.
 - **Web** — forms (login/2FA, products, prices, passwords with strength meter, users, branches), permission-gated UI, the showroom cart and checkout, drag-and-drop reordering.
-- **Playwright** — the complete story (admin creates a branch and its staff → manager adds a product → finance prices it → showroom places an order → cashier confirms and downloads the receipt → admin sees it all in the activity log), the bookings story (admin creates the call-center account → she books a full PPF → sales asks for a light job and for a second full PPF → she approves them → a third full PPF is refused), role landing pages, the public catalogue (no prices in DOM or network), and **visual snapshots of the landing page**.
+- **Playwright** — the checkout story in `e2e/checkout.spec.ts` (a visitor signs in with a code, pays for a part by card, the Bin Omran cashier sees it as paid online; the browser never reaches Tap), the complete story (admin creates a branch and its staff → manager adds a product → finance prices it → showroom places an order → cashier confirms and downloads the receipt → admin sees it all in the activity log), the bookings story (admin creates the call-center account → she books a full PPF → sales asks for a light job and for a second full PPF → she approves them → a third full PPF is refused), role landing pages, the public catalogue (no barcodes in DOM or network), and **visual snapshots of the landing page**.
 
 ## 7. Permission model
 
@@ -213,6 +238,7 @@ Effective permissions = role permissions + user grants − user revokes, **resol
 | `order.cancel` | Cancel pending orders | Cashier |
 | `order.confirm` | Confirm orders (then immutable except for Super Admin) | Cashier |
 | `order.receipt.download` | Download PDF receipts | Cashier |
+| `order.odoo.retry` | Send a paid web order to Odoo again after it failed | Finance |
 | `booking.ppf.read` | View the PPF calendar, bookings and light-job requests | Reservations |
 | `booking.ppf.manage` | Add, edit and cancel PPF bookings; close and reopen days; answer requests; set the sales PIN | Reservations |
 | `booking.general.manage` | View and manage general reservations | Reservations |
@@ -277,6 +303,86 @@ api/src/                           NestJS modules: auth, account, rbac, users, b
                                    showroom, orders, ppf, reservations, sales-access, receipts, activity, public
 api/test/                          API end-to-end tests · e2e/ = Playwright tests
 ```
+
+
+## 11. Payments (Tap)
+
+### How it works
+
+1. The visitor fills the basket and opens `/ar/checkout`, types a Qatari mobile (8 digits starting with 3, 5, 6 or 7) and the one-time code sent to it.
+2. The API creates the order from the server's prices (the browser never sends a price) and holds it for `CHECKOUT_TTL_MINUTES`.
+3. Tap's card form (loaded from Tap's CDN with the public key) turns the card into a token; the card number never reaches our servers. The API creates the charge and the customer goes through 3-D Secure at Tap, then back to `/ar/checkout/return`.
+4. An order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order.
+5. The paid order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code. There is no e-mail receipt; the cashier prints the usual PDF receipt.
+
+Routes (all under `/api/shop`; the customer cookie and the `X-Requested-With: wolfcar` header apply except on the webhook and the code request):
+
+| Route | What |
+|---|---|
+| `POST /otp`, `POST /otp/verify` | Ask for and check a sign-in code |
+| `GET /me`, `POST /logout`, `POST /logout-all` | Current customer; sign out here or everywhere |
+| `POST /orders`, `GET /orders/:id`, `POST /orders/:id/cancel` | Create, read and cancel an unpaid order |
+| `POST /orders/:id/pay` | Create the Tap charge for the card token |
+| `POST /orders/:id/reconcile` | Read the charge back from Tap (used by the return page) |
+| `POST /payments/tap/webhook` | Tap's webhook; checked by its `hashstring` header, no cookie |
+
+Staff side, under `/api/orders`: confirm and edit are refused for web orders; *cancel* refunds the card first; `POST /:id/collect` marks collected; `POST /:id/odoo/retry` (permission `order.odoo.retry`, Finance) sends a failed order to Odoo again.
+
+### Run it locally without a Tap account
+
+In `api/.env`:
+
+```
+PAYMENTS_PROVIDER=fake
+SMS_PROVIDER=console
+OTP_DEV_CODE_IN_RESPONSE=true     # the sign-in code is also returned to the page, so you need not read the log
+WEB_PUBLIC_URL=http://localhost:3000
+API_PUBLIC_URL=http://localhost:4000
+```
+
+Restart the API. Sign-in codes appear in the API log. The fake gateway keeps charges in memory, so restarting the API forgets them. The card form still loads Tap's script, so for a full click-through use Tap test keys (next section); the Playwright story (`e2e/checkout.spec.ts`) replaces the card form with a stub and needs neither.
+
+### Run it locally with Tap test keys
+
+1. In Tap's dashboard take the **test** keys. Put the secret key in `api/.env` as `TAP_SECRET_KEY=sk_test_…` with `PAYMENTS_PROVIDER=tap`, and the public key in `.env.local` (repo root, git-ignored) as `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_test_…` (optionally `NEXT_PUBLIC_TAP_MERCHANT_ID=…`). Never commit either file.
+2. Tap must reach the webhook from the internet, so expose the API: `ngrok http 4000`, then set `API_PUBLIC_URL=https://<your-tunnel>` in `api/.env` and restart the API. Keep `WEB_PUBLIC_URL=http://localhost:3000`.
+3. Nothing is configured in Tap's dashboard for the webhook: the API passes the webhook URL (`post.url`) with every charge.
+4. Test card: Visa `4508750015741019`, expiry `01/39`, any CVC; it approves through 3-D Secure. More cards: `developers.tap.company/reference/testing-cards`.
+
+If the webhook never arrives (tunnel down), the return page reads the charge back from Tap, so the customer still sees *paid*.
+
+### Going live checklist
+
+Owner and business:
+
+- [ ] **Tap live keys.** Ask integrations@tap.company to register `wolfcar.qa` for the live public key. Use `sk_live_…` / `pk_live_…` only on the server.
+- [ ] **Refund policy page** on the website (Tap and the acquiring bank ask for it).
+- [ ] **SMS provider and a Qatar sender name** (the sender name has lead time). Only the `console` sender exists, and it logs every sign-in code, so **production must not use it**: the sender has to be written and `SMS_PROVIDER` switched before real customers sign in.
+- [ ] **Odoo:** a dedicated sales user (`ODOO_WRITE_LOGIN`, `ODOO_WRITE_API_KEY`); the Bin Omran warehouse id (`ODOO_WEB_WAREHOUSE_ID`); `ODOO_FALLBACK_PRODUCT_ID`; check one order in the test database for product taxes (the sale order line carries the price paid, so a tax added on confirm would make Odoo's total differ from Tap's); decide whether the accountant wants invoices too.
+
+Server (`deploy/api.prod.env`, see `deploy/api.prod.env.example`):
+
+- [ ] `PAYMENTS_PROVIDER=tap` and `TAP_SECRET_KEY=sk_live_…`.
+- [ ] `WEB_PUBLIC_URL` and `API_PUBLIC_URL` both `https://wolfcar.qa` (one origin behind Caddy). Tap must reach `POST /api/shop/payments/tap/webhook` from the internet: check that Caddy and any firewall let it through.
+- [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` for the **web** process. It is not an API setting, and `compose.prod.yml` does not pass it to the web container yet: add it there (and check whether it is needed at build time) before the first live test.
+- [ ] Run one API process. The Odoo queue and the expiry sweep run inside it.
+
+**Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `SMS_PROVIDER=console` with real customers. The API refuses `OTP_DEV_CODE_IN_RESPONSE=true` next to an `sk_live_` key, but not next to `fake`.
+
+Check in the Tap sandbox before launch (the fake gateway cannot tell you):
+
+- [ ] A full 3-D Secure payment with the test card lands on `/checkout/return` and shows *paid*, and the webhook arrives and is accepted (its `hashstring` checks out).
+- [ ] Tap refuses a second refund of the same charge (two staff cancelling at once rely on it).
+- [ ] The card form's valid/invalid events: *Pay* recovers after a corrected card.
+- [ ] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`).
+
+### Limits of phase 1
+
+- Pickup at Bin Omran only; no delivery, no stock check; products without a price are ordered on WhatsApp.
+- No e-mail receipt: the customer shows the order code at the branch.
+- Refunding an order that is already in Odoo does **not** reverse the Odoo sale order; the accountant reverses it by hand.
+- Apple Pay and Google Pay, delivery and stock come in phase 2; public PPF booking with a deposit in phase 3.
+- Design and open questions: `docs/superpowers/specs/2026-10-18-online-checkout-phase1-design.md`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Online checkout, phase 1: buy parts with a card — design
 
-Date: 2026-10-18 · Status: written from the 2026-10-18 conversation; awaiting the owner's read
+Date: 2026-10-18 · Status: phase 1 is implemented on branch `feat/online-checkout-phase1` (not yet merged or live); the open questions below still stand. Setup and go-live: README section 11
 
 ## Intent
 
