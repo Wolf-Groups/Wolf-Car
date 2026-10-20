@@ -548,6 +548,19 @@ describe('PaymentsService', () => {
       expect(paymentWrites()).not.toContainEqual(expect.objectContaining({ refundId: expect.any(String) as string }));
     });
 
+    it.each(['INITIATED', 'PENDING', 'IN_PROGRESS', 'REFUNDED', 'refunded', 'In_Progress'])('accepts a refund Tap answers %s', async (status) => {
+      gateway.refund.mockResolvedValue({ id: 'rf_1', status });
+      await expect(service.refundForCancel('o-1', 'Cancelled by admin')).resolves.toEqual({ refundId: 'rf_1' });
+      expect(paymentWrites()).toContainEqual(expect.objectContaining({ refundId: 'rf_1' }));
+    });
+
+    it.each(['FAILED', 'DECLINED', 'CANCELLED', '', undefined])('answers 502 REFUND_FAILED, storing no refund id, when Tap answers the refund %p', async (status) => {
+      gateway.refund.mockResolvedValue({ id: 'rf_1', status } as never);
+      const err = await failsWith(service.refundForCancel('o-1', 'Cancelled by admin'), 502, 'REFUND_FAILED');
+      expect(err.getResponse()).toMatchObject({ reason: status ? status : 'UNKNOWN' });
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
     it('refunds the newest CAPTURED attempt, not a newer attempt that failed', async () => {
       const captured = { ...paymentRow({ status: 'CAPTURED' }), order: { ...webRow({ status: 'CONFIRMED', paymentStatus: 'PAID' }), branchId: 'bo' } };
       const newerFailed = { ...captured, id: 'pay-2', chargeId: 'chg_2', status: 'FAILED', createdAt: new Date('2026-10-18T10:05:00.000Z') };

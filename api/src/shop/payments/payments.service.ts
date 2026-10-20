@@ -59,6 +59,9 @@ export const payingAttemptWhere = (orderId: string) =>
     OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
   }) satisfies Prisma.PaymentWhereInput;
 
+/** Refund statuses that mean Tap took the refund (it may still be on its way to the card). */
+const ACCEPTED_REFUND_STATUSES = new Set(['INITIATED', 'PENDING', 'IN_PROGRESS', 'REFUNDED']);
+
 /** Provider codes go into payments.failure_code (VARCHAR 64) and error bodies. */
 const code64 = (code: unknown): string => String(code).slice(0, 64);
 
@@ -298,6 +301,9 @@ export class PaymentsService {
       if (err instanceof PaymentGatewayError) throw refundFailed(code64(err.code));
       throw err;
     }
+    // Tap answers a refund object even when it did not take it (FAILED, DECLINED…): only these mean it is on its way
+    const refundStatus = typeof refund.status === 'string' ? refund.status : '';
+    if (!ACCEPTED_REFUND_STATUSES.has(refundStatus.toUpperCase())) throw refundFailed(code64(refundStatus || 'UNKNOWN'));
     await this.prisma.payment.update({ where: { id: payment.id }, data: { refundId: refund.id, refundedAt: new Date() }, select: { id: true } });
     return { refundId: refund.id };
   }
