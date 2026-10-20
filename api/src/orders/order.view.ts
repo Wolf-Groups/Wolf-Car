@@ -1,5 +1,6 @@
 import { money } from '../common/money';
-import type { OrderStatus, Prisma } from '../generated/prisma/client';
+import type { OrderSource, OrderStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from '../generated/prisma/client';
+import type { OdooOrderStatus } from '../odoo/odoo-orders.service';
 import { branchBarcode } from '../products/branch-barcodes';
 import { imageUrl } from '../uploads/image-processing';
 
@@ -17,6 +18,11 @@ export const ORDER_LIST_SELECT = {
   updatedAt: true,
   confirmedAt: true,
   cancelledAt: true,
+  source: true,
+  paymentStatus: true,
+  paidAt: true,
+  collectedAt: true,
+  customerPhone: true,
   branch: { select: { id: true, code: true, name: true, nameAr: true } },
   createdBy: PERSON,
   confirmedBy: PERSON,
@@ -26,6 +32,10 @@ export const ORDER_LIST_SELECT = {
 
 export const ORDER_DETAIL_SELECT = {
   ...ORDER_LIST_SELECT,
+  customerEmail: true,
+  collectedBy: PERSON,
+  /** The newest card attempt (web orders only). */
+  payments: { orderBy: { createdAt: 'desc' }, take: 1, select: { chargeId: true, status: true, failureCode: true, refundId: true } },
   items: {
     orderBy: { position: 'asc' },
     select: {
@@ -54,6 +64,11 @@ interface OrderRow {
   updatedAt: Date;
   confirmedAt: Date | null;
   cancelledAt: Date | null;
+  source: OrderSource;
+  paymentStatus: PaymentStatus;
+  paidAt: Date | null;
+  collectedAt: Date | null;
+  customerPhone: string | null;
   branch: { id: string; code: string; name: string; nameAr: string };
   createdBy: NonNullable<Person>;
   confirmedBy: Person;
@@ -62,6 +77,9 @@ interface OrderRow {
 }
 
 interface OrderDetailRow extends OrderRow {
+  customerEmail: string | null;
+  collectedBy: Person;
+  payments: { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null }[];
   items: {
     id: string;
     productId: string;
@@ -91,16 +109,34 @@ export function orderSummary(o: OrderRow) {
     cancelledAt: o.cancelledAt,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
+    source: o.source,
+    paymentStatus: o.paymentStatus,
+    paidAt: o.paidAt?.toISOString() ?? null,
+    collectedAt: o.collectedAt?.toISOString() ?? null,
+    customerPhone: o.customerPhone,
   };
 }
 
+/** The newest card attempt as staff see it; null for showroom orders and unpaid web orders without an attempt. */
+export type OrderPaymentView = { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null } | null;
+
 /**
  * `bases` comes from branchBarcodeBases for the order's branch: a branch whose
- * till is not Odoo scans a multi-colour product by its shared code.
+ * till is not Odoo scans a multi-colour product by its shared code. `odoo` is
+ * the outbox state of a paid web order (OdooOrdersService.statusFor), null
+ * for showroom orders.
  */
-export function orderDetail(o: OrderDetailRow, bases: ReadonlyMap<number, string> | null = null) {
+export function orderDetail(o: OrderDetailRow, bases: ReadonlyMap<number, string> | null = null, odoo: OdooOrderStatus | null = null) {
+  const last = o.payments[0];
+  const payment: OrderPaymentView = last
+    ? { chargeId: last.chargeId, status: last.status, failureCode: last.failureCode, refundId: last.refundId }
+    : null;
   return {
     ...orderSummary(o),
+    customerEmail: o.customerEmail,
+    collectedBy: o.collectedBy,
+    payment,
+    odoo,
     items: o.items.map((i) => ({
       id: i.id,
       productId: i.productId,

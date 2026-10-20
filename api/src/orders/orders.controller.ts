@@ -8,8 +8,9 @@ import { ListOrdersQueryDto, UpdateOrderDto } from './dto/orders.dto';
 import { OrdersService } from './orders.service';
 
 /**
- * Orders placed in the showrooms. Branch users only ever see and change
- * their own branch's orders; order.read.all lists every branch (read-only).
+ * Orders placed in the showrooms and on the website (source WEB, picked up at
+ * the web-orders branch). Branch users only ever see and change their own
+ * branch's orders; order.read.all lists every branch (read-only).
  */
 @ApiTags('orders')
 @ApiBearerAuth()
@@ -46,11 +47,21 @@ export class OrdersController {
     return this.orders.confirm(user, id);
   }
 
+  /** A paid web order's card is refunded first (502 REFUND_FAILED leaves the order as it was). */
   @RequirePermissions('order.cancel')
   @Audit('order.cancel', { entity: 'Order', idParam: 'id' })
   @Post(':id/cancel')
   @HttpCode(200)
   cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.orders.cancel(user, id);
+  }
+
+  /** The cashier hands a paid web order over at the counter (once). */
+  @RequirePermissions('order.confirm')
+  @Audit('order.collect', { entity: 'Order', idParam: 'id' })
+  @Post(':id/collect')
+  @HttpCode(200)
+  collect(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.collect(user, id);
   }
 }

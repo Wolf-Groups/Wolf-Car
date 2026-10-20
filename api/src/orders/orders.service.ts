@@ -1,14 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ORDER_CODE_PATTERN } from '../../../shared/validation';
 import { AuditTrail } from '../activity/audit-trail.service';
 import { OrderLockedException } from '../common/errors';
 import { decimal } from '../common/money';
 import { type Page, skipTake } from '../common/pagination';
 import type { AuthUser } from '../common/types';
-import { Prisma } from '../generated/prisma/client';
+import { type OrderSource, type OrderStatus, Prisma } from '../generated/prisma/client';
+import { OdooOrdersService } from '../odoo/odoo-orders.service';
 import { branchBarcodeBases } from '../products/branch-barcodes';
 import { PrismaService } from '../prisma/prisma.service';
-import { todo } from '../shop/todo';
+import { PaymentsService } from '../shop/payments/payments.service';
 import type { ListOrdersQueryDto, UpdateOrderDto } from './dto/orders.dto';
 import { canReadAllBranches, orderReadScope, orderWriteScope } from './order-scope';
 import {
@@ -25,17 +26,28 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** Dates without a time are Qatar calendar days (UTC+3, no DST). */
 const qatarDay = (d: string) => new Date(`${d}T00:00:00+03:00`);
 
+const webOrderReadonly = () =>
+  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_READONLY', message: 'Web orders cannot be edited: the total is what the card was charged.' });
+const webOrderUnpaid = () =>
+  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_UNPAID', message: 'A web order is confirmed by its card payment, not by staff.' });
+const orderNotCollectable = () =>
+  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'ORDER_NOT_COLLECTABLE', message: 'Only a paid web order that has not been collected can be handed over.' });
+
 @Injectable()
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly trail: AuditTrail,
+    private readonly payments: PaymentsService,
+    // the order detail's `odoo` field (statusFor) and the retry route arrive with plan Task 10
+    private readonly odooOrders: OdooOrdersService,
   ) {}
 
   async list(user: AuthUser, q: ListOrdersQueryDto): Promise<Page<OrderSummary>> {
     const and: Prisma.OrderWhereInput[] = [orderReadScope(user)];
     if (q.branchId && canReadAllBranches(user)) and.push({ branchId: q.branchId });
     if (q.status) and.push({ status: q.status });
+    if (q.source) and.push({ source: q.source });
     if (q.from) and.push({ createdAt: { gte: DAY.test(q.from) ? qatarDay(q.from) : new Date(q.from) } });
     if (q.to) {
       and.push(
@@ -74,12 +86,15 @@ export class OrdersService {
    * Edits a pending order (customer name, quantities, removing lines). Unit
    * prices stay as snapshotted. Confirmed/cancelled orders are immutable —
    * except for the Super Admin, whose override is flagged in the audit log.
+   * Web orders are never edited (409 WEB_ORDER_READONLY), not even by the
+   * Super Admin: their total is what the card was charged.
    */
   async update(user: AuthUser, id: string, dto: UpdateOrderDto): Promise<OrderDetail> {
     if (dto.customerName === undefined && dto.items === undefined) {
       throw new BadRequestException({ statusCode: 400, error: 'Bad Request', code: 'NOTHING_TO_UPDATE', message: 'Nothing to update.' });
     }
     const before = await this.get(user, id, orderWriteScope(user));
+    if (before.source === 'WEB') throw webOrderReadonly();
     const override = before.status !== 'PENDING';
     if (override && user.role !== 'SUPER_ADMIN') throw new OrderLockedException(before.status);
 
@@ -128,22 +143,80 @@ export class OrdersService {
     return after;
   }
 
+  /** A web order is confirmed by its payment (PaymentsService.settle), never by staff: 409 WEB_ORDER_UNPAID. */
   async confirm(user: AuthUser, id: string): Promise<OrderDetail> {
+    const order = await this.findWritable(user, id);
+    if (order.source === 'WEB') throw webOrderUnpaid();
     return this.transition(user, id, 'CONFIRMED', { confirmedById: user.id, confirmedAt: new Date() }, ['PENDING']);
   }
 
+  /**
+   * Cashiers cancel pending orders, the Super Admin also confirmed ones. A web
+   * order whose card was captured (and not yet refunded) is refunded first,
+   * and only once the order is known to be the caller's and cancellable: a
+   * refund that fails (502 REFUND_FAILED) leaves the order as it was.
+   */
   async cancel(user: AuthUser, id: string): Promise<OrderDetail> {
     const from: ('PENDING' | 'CONFIRMED')[] = user.role === 'SUPER_ADMIN' ? ['PENDING', 'CONFIRMED'] : ['PENDING'];
-    return this.transition(user, id, 'CANCELLED', { cancelledById: user.id, cancelledAt: new Date() }, from);
+    const order = await this.findWritable(user, id);
+    if (!(from as OrderStatus[]).includes(order.status)) throw new OrderLockedException(order.status);
+
+    const data: Prisma.OrderUncheckedUpdateManyInput = { cancelledById: user.id, cancelledAt: new Date() };
+    if (order.source === 'WEB' && (await this.hasRefundableCapture(id))) {
+      this.trail.setEntity('Order', id).setBranch(order.branchId);
+      const { refundId } = await this.payments.refundForCancel(id, `Cancelled by ${user.username}`);
+      // recorded before the transition, so the entry keeps it even if the cancel then loses a race
+      this.trail.addMetadata({ refundId });
+      data.paymentStatus = 'REFUNDED';
+    }
+    return this.transition(user, id, 'CANCELLED', data, from);
   }
 
   /**
    * Hands a paid web order over at the counter: one conditional update
    * (source WEB, PAID, CONFIRMED, not yet collected) → collectedAt/collectedById.
-   * 404 outside the user's branch, else 409 ORDER_NOT_COLLECTABLE. Plan Task 8.
+   * 404 outside the user's branch, else 409 ORDER_NOT_COLLECTABLE.
    */
-  collect(user: AuthUser, id: string): Promise<OrderDetail> {
-    return todo('OrdersService.collect', user, id);
+  async collect(user: AuthUser, id: string): Promise<OrderDetail> {
+    const scope = orderWriteScope(user);
+    const { count } = await this.prisma.order.updateMany({
+      // the scope comes after `id`: a user without a branch gets { id: { in: [] } }, which matches nothing
+      where: { id, ...scope, source: 'WEB', paymentStatus: 'PAID', status: 'CONFIRMED', collectedAt: null },
+      data: { collectedAt: new Date(), collectedById: user.id },
+    });
+    if (count === 0) {
+      await this.get(user, id, scope); // 404 when outside the user's branch
+      throw orderNotCollectable();
+    }
+    const after = await this.get(user, id, scope);
+    this.trail
+      .setEntity('Order', id)
+      .setBranch(after.branch.id)
+      .setChange({ collectedAt: null }, { collectedAt: after.collectedAt })
+      .addMetadata({ code: after.code });
+    return after;
+  }
+
+  /** What confirm and cancel decide on, read in the caller's write scope (404 outside it). */
+  private async findWritable(user: AuthUser, id: string): Promise<{ status: OrderStatus; source: OrderSource; branchId: string }> {
+    const row = await this.prisma.order.findFirst({ where: { AND: [{ id }, orderWriteScope(user)] }, select: { status: true, source: true, branchId: true } });
+    if (!row) throw new NotFoundException('Order not found.');
+    return row;
+  }
+
+  /** The refund rule of PaymentsService.refundForCancel: a captured, unrefunded attempt that is not a DUPLICATE_CAPTURE. */
+  private async hasRefundableCapture(orderId: string): Promise<boolean> {
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        orderId,
+        status: 'CAPTURED',
+        refundId: null,
+        // not `NOT: { failureCode: 'DUPLICATE_CAPTURE' }`: SQL NULL would hide the paying attempt
+        OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
+      },
+      select: { id: true },
+    });
+    return Boolean(payment);
   }
 
   /** Status change as one conditional UPDATE, so two cashiers (or confirm vs. edit) cannot race. */

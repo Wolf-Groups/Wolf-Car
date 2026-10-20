@@ -88,7 +88,8 @@ const MATRIX: Record<string, Caller[] | { public: number }> = {
   'POST /api/orders/:id/confirm': ['admin', 'cashier'],
   'POST /api/orders/:id/cancel': ['admin', 'cashier'],
   'GET /api/orders/:id/receipt': ['admin', 'cashier'],
-  // POST /api/orders/:id/collect (Task 8) and POST /api/orders/:id/odoo/retry (Task 10) are added with their routes
+  'POST /api/orders/:id/collect': ['admin', 'cashier'],
+  // POST /api/orders/:id/odoo/retry (Task 10) is added with its route
 
   // the website's customers: no bearer token of any kind opens these, only the customer cookie
   'POST /api/shop/otp': ALL,

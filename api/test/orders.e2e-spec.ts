@@ -314,7 +314,8 @@ describe('Showroom & orders (e2e)', () => {
 
     it('the BO cashier sees where the order came from and whether it is paid; the GH cashier sees nothing', async () => {
       const bo = api(tok.boCashier);
-      const list = await bo.list('?source=WEB');
+      // unfiltered: the showroom order is compared too (the source filter has its own case above)
+      const list = await bo.list();
       const summary = (code: string) => list.body.items.find((o: { code: string }) => o.code === code);
       expect(summary(unpaid.code)).toMatchObject({ source: 'WEB', status: 'PENDING', paymentStatus: 'PENDING', paidAt: null, collectedAt: null, customerPhone: CUSTOMER_PHONE, customerName: 'Sara Al-Mansouri' });
       expect(summary(paid.code)).toMatchObject({ source: 'WEB', status: 'CONFIRMED', paymentStatus: 'PAID', paidAt: expect.any(String), collectedAt: null, customerPhone: CUSTOMER_PHONE });

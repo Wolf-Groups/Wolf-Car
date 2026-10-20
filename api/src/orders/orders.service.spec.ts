@@ -63,8 +63,7 @@ describe('OrdersService', () => {
   const trail = mock<AuditTrail>();
   const payments = mock<PaymentsService>();
   const odooOrders = mock<OdooOrdersService>();
-  // Task 8 makes these real constructor parameters
-  const service = new (OrdersService as unknown as new (...a: unknown[]) => OrdersService)(prisma, trail, payments, odooOrders);
+  const service = new OrdersService(prisma, trail, payments, odooOrders);
   const cashier = authUser({ role: 'CASHIER', branchId: 'gh' }, ['order.read.branch', 'order.update', 'order.confirm']);
   const admin = authUser({ role: 'SUPER_ADMIN', branchId: null });
 
