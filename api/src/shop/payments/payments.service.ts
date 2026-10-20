@@ -46,6 +46,19 @@ const refundFailed = (reason: string) =>
 const badSignature = () => new UnauthorizedException({ statusCode: 401, error: 'Unauthorized', code: 'BAD_SIGNATURE', message: 'Invalid signature.' });
 const unknownCharge = () => new NotFoundException({ statusCode: 404, error: 'Not Found', code: 'UNKNOWN_CHARGE', message: 'Unknown charge.' });
 
+/**
+ * The attempt that paid an order: CAPTURED and not a DUPLICATE_CAPTURE (staff
+ * refund those in Tap's dashboard). Shared by refundForCancel and
+ * OrdersService.cancel, which add the refundId condition they need.
+ */
+export const payingAttemptWhere = (orderId: string) =>
+  ({
+    orderId,
+    status: 'CAPTURED',
+    // not `NOT: { failureCode: 'DUPLICATE_CAPTURE' }`: in SQL that is unknown for the paying attempt's NULL code, which would hide it
+    OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
+  }) satisfies Prisma.PaymentWhereInput;
+
 /** Provider codes go into payments.failure_code (VARCHAR 64) and error bodies. */
 const code64 = (code: unknown): string => String(code).slice(0, 64);
 
@@ -271,13 +284,7 @@ export class PaymentsService {
    */
   async refundForCancel(orderId: string, reason: string): Promise<{ refundId: string }> {
     const payment = await this.prisma.payment.findFirst({
-      where: {
-        orderId,
-        status: 'CAPTURED',
-        refundId: null,
-        // not `NOT: { failureCode: 'DUPLICATE_CAPTURE' }`: in SQL that is unknown for the paying attempt's NULL code, which would hide it
-        OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
-      },
+      where: { ...payingAttemptWhere(orderId), refundId: null },
       orderBy: { createdAt: 'desc' },
       select: { id: true, chargeId: true, amount: true, currency: true, rawLast: true },
     });

@@ -162,7 +162,8 @@ describe('OrdersService', () => {
     // Task 8: the order is read (in the write scope) before the transition, then again after it
     prisma.order.findFirst.mockResolvedValueOnce(orderRow('CONFIRMED') as never).mockResolvedValue(orderRow('CANCELLED') as never);
     await service.cancel(admin, 'o-1');
-    expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }] });
+    // the paymentStatus read before the update must still hold (a payment settling mid-cancel gives 409)
+    expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'NONE' }] });
   });
 
   describe('web orders', () => {
@@ -189,7 +190,7 @@ describe('OrdersService', () => {
       expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
       expect(payments.refundForCancel.mock.invocationCallOrder[0]).toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0]);
       const call = prisma.order.updateMany.mock.calls[0][0];
-      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }] });
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PAID' }] });
       expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: admin.id });
       expect(trail.addMetadata).toHaveBeenCalledWith(expect.objectContaining({ refundId: 'rf_1' }));
     });
@@ -238,7 +239,7 @@ describe('OrdersService', () => {
       expect(payments.refundForCancel).toHaveBeenCalledWith('o-1', 'Cancelled by bo.cashier');
       expect(payments.refundForCancel.mock.invocationCallOrder[0]).toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0]);
       const call = prisma.order.updateMany.mock.calls[0][0];
-      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, { branchId: 'bo' }, { status: { in: ['PENDING'] } }] });
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, { branchId: 'bo' }, { status: { in: ['PENDING'] } }, { paymentStatus: 'PENDING' }] });
       expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: 'u-bo' });
     });
 
@@ -271,6 +272,68 @@ describe('OrdersService', () => {
       await service.cancel(cashier, 'o-1');
       expect(payments.refundForCancel).not.toHaveBeenCalled();
       expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('a payment settling mid-cancel is not cancelled unrefunded: the update requires the paymentStatus read, and 409 without refunding', async () => {
+      const unpaid = webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', paidAt: null, payments: [] });
+      // read unpaid; by the time of the update settle has made it CONFIRMED/PAID
+      prisma.order.findFirst.mockResolvedValueOnce(unpaid as never).mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.cancel(admin, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({
+        AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PENDING' }],
+      });
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+    });
+
+    it('a refund that went through is recorded on the order even when the cancel then updates nothing', async () => {
+      const pending = webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', paidAt: null });
+      // settle committed between the read and the payment lookup: the card is captured, the order CONFIRMED/PAID
+      prisma.order.findFirst.mockResolvedValueOnce(pending as never).mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_9' });
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+      await expect(service.cancel(boCashier, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(payments.refundForCancel).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.order.updateMany.mock.calls[1][0]).toEqual({ where: { id: 'o-1' }, data: { paymentStatus: 'REFUNDED' } });
+      expect(trail.addMetadata).toHaveBeenCalledWith({ refundId: 'rf_9' });
+    });
+
+    it('a refund that went through is recorded on the order when the database fails on the cancel, and that error is rethrown', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_9' });
+      const down = new Error('connection terminated');
+      prisma.order.updateMany.mockRejectedValueOnce(down).mockResolvedValueOnce({ count: 1 });
+
+      await expect(service.cancel(admin, 'o-1')).rejects.toBe(down);
+      expect(prisma.order.updateMany.mock.calls[1][0]).toEqual({ where: { id: 'o-1' }, data: { paymentStatus: 'REFUNDED' } });
+    });
+
+    it('a retry after such a refund asks the gateway nothing and cancels the order as REFUNDED', async () => {
+      const refunded = { ...webOrderRow().payments[0], refundId: 'rf_9' };
+      prisma.order.findFirst.mockResolvedValueOnce(webOrderRow({ payments: [refunded] }) as never).mockResolvedValue(webOrderRow({ status: 'CANCELLED', paymentStatus: 'REFUNDED', payments: [refunded] }) as never);
+      // only the refunded paying attempt exists: a lookup for an unrefunded one finds nothing
+      prisma.payment.findFirst.mockImplementation(((args?: { where?: { refundId?: unknown } }) =>
+        Promise.resolve(args?.where?.refundId === null ? null : refunded)) as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.cancel(admin, 'o-1');
+
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PAID' }] });
+      expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: admin.id });
+      // the lookups used the paying-attempt rule (no DUPLICATE_CAPTURE, NULL-safe)
+      for (const [args] of prisma.payment.findFirst.mock.calls) {
+        expect(args?.where).toMatchObject({ orderId: 'o-1', status: 'CAPTURED', OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }] });
+      }
     });
 
     it('cannot be edited by staff: 409 WEB_ORDER_READONLY', async () => {

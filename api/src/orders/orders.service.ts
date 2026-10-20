@@ -5,11 +5,11 @@ import { OrderLockedException } from '../common/errors';
 import { decimal } from '../common/money';
 import { type Page, skipTake } from '../common/pagination';
 import type { AuthUser } from '../common/types';
-import { type OrderSource, type OrderStatus, Prisma } from '../generated/prisma/client';
+import { type OrderSource, type OrderStatus, type PaymentStatus, Prisma } from '../generated/prisma/client';
 import { OdooOrdersService } from '../odoo/odoo-orders.service';
 import { branchBarcodeBases } from '../products/branch-barcodes';
 import { PrismaService } from '../prisma/prisma.service';
-import { PaymentsService } from '../shop/payments/payments.service';
+import { payingAttemptWhere, PaymentsService } from '../shop/payments/payments.service';
 import type { ListOrdersQueryDto, UpdateOrderDto } from './dto/orders.dto';
 import { canReadAllBranches, orderReadScope, orderWriteScope } from './order-scope';
 import {
@@ -155,6 +155,11 @@ export class OrdersService {
    * order whose card was captured (and not yet refunded) is refunded first,
    * and only once the order is known to be the caller's and cancellable: a
    * refund that fails (502 REFUND_FAILED) leaves the order as it was.
+   *
+   * The conditional update also requires the paymentStatus read here, so a
+   * payment settling mid-cancel gives 409 instead of cancelling a paid order
+   * unrefunded (a retry then refunds it). Once money went back, the order says
+   * REFUNDED even when the cancel itself does not go through.
    */
   async cancel(user: AuthUser, id: string): Promise<OrderDetail> {
     const from: ('PENDING' | 'CONFIRMED')[] = user.role === 'SUPER_ADMIN' ? ['PENDING', 'CONFIRMED'] : ['PENDING'];
@@ -162,14 +167,25 @@ export class OrdersService {
     if (!(from as OrderStatus[]).includes(order.status)) throw new OrderLockedException(order.status);
 
     const data: Prisma.OrderUncheckedUpdateManyInput = { cancelledById: user.id, cancelledAt: new Date() };
-    if (order.source === 'WEB' && (await this.hasRefundableCapture(id))) {
+    const unchanged: Prisma.OrderWhereInput = { paymentStatus: order.paymentStatus };
+    if (order.source !== 'WEB') return this.transition(user, id, 'CANCELLED', data, from, unchanged);
+
+    if (await this.payingAttempt(id, 'unrefunded')) {
       this.trail.setEntity('Order', id).setBranch(order.branchId);
       const { refundId } = await this.payments.refundForCancel(id, `Cancelled by ${user.username}`);
       // recorded before the transition, so the entry keeps it even if the cancel then loses a race
       this.trail.addMetadata({ refundId });
       data.paymentStatus = 'REFUNDED';
+      try {
+        return await this.transition(user, id, 'CANCELLED', data, from, unchanged);
+      } catch (err) {
+        await this.prisma.order.updateMany({ where: { id }, data: { paymentStatus: 'REFUNDED' } });
+        throw err;
+      }
     }
-    return this.transition(user, id, 'CANCELLED', data, from);
+    // an earlier cancel refunded the card but did not record it on the order (it lost a race, or the database failed)
+    if (await this.payingAttempt(id, 'refunded')) data.paymentStatus = 'REFUNDED';
+    return this.transition(user, id, 'CANCELLED', data, from, unchanged);
   }
 
   /**
@@ -198,22 +214,22 @@ export class OrdersService {
   }
 
   /** What confirm and cancel decide on, read in the caller's write scope (404 outside it). */
-  private async findWritable(user: AuthUser, id: string): Promise<{ status: OrderStatus; source: OrderSource; branchId: string }> {
-    const row = await this.prisma.order.findFirst({ where: { AND: [{ id }, orderWriteScope(user)] }, select: { status: true, source: true, branchId: true } });
+  private async findWritable(
+    user: AuthUser,
+    id: string,
+  ): Promise<{ status: OrderStatus; source: OrderSource; paymentStatus: PaymentStatus; branchId: string }> {
+    const row = await this.prisma.order.findFirst({
+      where: { AND: [{ id }, orderWriteScope(user)] },
+      select: { status: true, source: true, paymentStatus: true, branchId: true },
+    });
     if (!row) throw new NotFoundException('Order not found.');
     return row;
   }
 
-  /** The refund rule of PaymentsService.refundForCancel: a captured, unrefunded attempt that is not a DUPLICATE_CAPTURE. */
-  private async hasRefundableCapture(orderId: string): Promise<boolean> {
+  /** Whether the order has a paying attempt (PaymentsService's rule) that is still to be refunded, or already was. */
+  private async payingAttempt(orderId: string, state: 'unrefunded' | 'refunded'): Promise<boolean> {
     const payment = await this.prisma.payment.findFirst({
-      where: {
-        orderId,
-        status: 'CAPTURED',
-        refundId: null,
-        // not `NOT: { failureCode: 'DUPLICATE_CAPTURE' }`: SQL NULL would hide the paying attempt
-        OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
-      },
+      where: { ...payingAttemptWhere(orderId), refundId: state === 'unrefunded' ? null : { not: null } },
       select: { id: true },
     });
     return Boolean(payment);
@@ -226,9 +242,12 @@ export class OrdersService {
     to: 'CONFIRMED' | 'CANCELLED',
     data: Prisma.OrderUncheckedUpdateManyInput,
     from: ('PENDING' | 'CONFIRMED')[],
+    /** A further condition the row must still meet (cancel: the paymentStatus it decided on). */
+    unchanged?: Prisma.OrderWhereInput,
   ): Promise<OrderDetail> {
     const scope = orderWriteScope(user);
-    const result = await this.prisma.order.updateMany({ where: { AND: [{ id }, scope, { status: { in: from } }] }, data: { ...data, status: to } });
+    const where: Prisma.OrderWhereInput = { AND: [{ id }, scope, { status: { in: from } }, ...(unchanged ? [unchanged] : [])] };
+    const result = await this.prisma.order.updateMany({ where, data: { ...data, status: to } });
     if (result.count === 0) {
       const current = await this.get(user, id, scope); // 404 when outside the user's branch
       throw new OrderLockedException(current.status);
