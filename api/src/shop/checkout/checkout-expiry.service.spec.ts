@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { mock, mockDeep } from 'jest-mock-extended';
 import type { ActivityService } from '../../activity/activity.service';
@@ -103,5 +104,24 @@ describe('CheckoutExpiryService', () => {
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
     service.onModuleDestroy();
+  });
+
+  it('starts the timer outside test, and a failing sweep does not escape it', async () => {
+    jest.useFakeTimers();
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      const live = new CheckoutExpiryService(prisma, { get: () => 'production' } as unknown as ConfigService<Env, true>, activity);
+      prisma.order.findMany.mockRejectedValue(new Error('db down'));
+      live.onModuleInit();
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('db down'));
+      live.onModuleDestroy();
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
+    } finally {
+      logged.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });

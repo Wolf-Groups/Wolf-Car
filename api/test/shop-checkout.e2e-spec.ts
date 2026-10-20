@@ -480,7 +480,7 @@ describe('Online checkout (e2e)', () => {
   });
 
   // flipped to describe in Task 7
-  describe.skip('expiry', () => {
+  describe('expiry', () => {
     const sweep = (now?: Date) => t.app.get(CheckoutExpiryService).sweep(now);
 
     it('cancels an unpaid order past its expiry and writes one activity entry', async () => {
