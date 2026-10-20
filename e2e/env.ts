@@ -54,5 +54,10 @@ export function apiEnv(): Record<string, string> {
     // the Odoo outbox timer runs here (production mode): it must never write to a real Odoo
     ODOO_WRITE_LOGIN: "",
     ODOO_WRITE_API_KEY: "",
+    // nor read from one: the catalogue sync timer would replace the seeded catalogue mid-run
+    ODOO_URL: "",
+    ODOO_DB: "",
+    ODOO_LOGIN: "",
+    ODOO_API_KEY: "",
   };
 }
