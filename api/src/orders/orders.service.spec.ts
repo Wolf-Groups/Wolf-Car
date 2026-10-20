@@ -8,6 +8,7 @@ import type { OdooOrdersService } from '../odoo/odoo-orders.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { ListOrdersQueryDto } from './dto/orders.dto';
 import type { PaymentsService } from '../shop/payments/payments.service';
+import { ORDER_DETAIL_SELECT } from './order.view';
 import { OrdersService } from './orders.service';
 
 const orderRow = (status = 'PENDING') => ({
@@ -420,6 +421,22 @@ describe('OrdersService', () => {
       prisma.order.findFirst.mockResolvedValue(orderRow('CONFIRMED') as never);
       expect((await service.get(admin, 'o-1')).odoo).toBeNull();
       expect(odooOrders.statusFor).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a test charge (live_mode false)', { id: 'chg_1', status: 'CAPTURED', live_mode: false }, true],
+      ['a live charge', { id: 'chg_1', status: 'CAPTURED', live_mode: true }, false],
+      ['a charge without live_mode', { id: 'chg_1', status: 'CAPTURED' }, false],
+      ['no stored charge', null, false],
+    ])('the detail says whether the payment was %s made in test mode', async (_label, rawLast, testMode) => {
+      odooOrders.statusFor.mockResolvedValue(null);
+      const row = webOrderRow();
+      prisma.order.findFirst.mockResolvedValue({ ...row, payments: [{ ...row.payments[0], rawLast }] } as never);
+      expect((await service.get(admin, 'o-1')).payment).toEqual({ chargeId: 'chg_1', status: 'CAPTURED', failureCode: null, refundId: null, testMode });
+    });
+
+    it('the detail reads the stored charge of the newest attempt', () => {
+      expect(ORDER_DETAIL_SELECT.payments.select).toMatchObject({ rawLast: true });
     });
 
     it('retryOdoo: queues the row again and answers the detail; 404 outside the read scope, before touching the outbox', async () => {

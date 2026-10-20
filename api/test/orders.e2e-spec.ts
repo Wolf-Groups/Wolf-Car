@@ -353,7 +353,8 @@ describe('Showroom & orders (e2e)', () => {
         createdBy: { username: 'system.web' },
         confirmedBy: { username: 'system.web' },
         collectedBy: null,
-        payment: { chargeId: paid.chargeId, status: 'CAPTURED', failureCode: null, refundId: null },
+        // the fake gateway's charges are test charges (live_mode false), as Tap's sandbox ones are
+        payment: { chargeId: paid.chargeId, status: 'CAPTURED', failureCode: null, refundId: null, testMode: true },
       });
       expect((await bo.get(showroomBo.id)).body).toMatchObject({ source: 'SHOWROOM', payment: null, odoo: null, customerEmail: null });
 

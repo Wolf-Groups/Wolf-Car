@@ -197,7 +197,14 @@ export interface OrderDetail extends OrderSummary {
   customerEmail: string | null;
   collectedBy: PersonRef | null;
   /** the newest card attempt; null for showroom orders and before the first attempt */
-  payment: { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null } | null;
+  payment: {
+    chargeId: string | null;
+    status: PaymentAttemptStatus;
+    failureCode: string | null;
+    refundId: string | null;
+    /** Tap's stored charge says live_mode false: a sandbox (or fake gateway) payment, no real money */
+    testMode: boolean;
+  } | null;
   /** null for showroom orders and unpaid web orders; when Odoo writing is off it is PENDING with lastError ODOO_WRITE_NOT_CONFIGURED */
   odoo: { status: OdooOutboxStatus; saleOrderId: number | null; attempts: number; lastError: string | null; nextAttemptAt: string | null } | null;
 }

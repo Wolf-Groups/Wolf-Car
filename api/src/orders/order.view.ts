@@ -35,7 +35,7 @@ export const ORDER_DETAIL_SELECT = {
   customerEmail: true,
   collectedBy: PERSON,
   /** The newest card attempt (web orders only). */
-  payments: { orderBy: { createdAt: 'desc' }, take: 1, select: { chargeId: true, status: true, failureCode: true, refundId: true } },
+  payments: { orderBy: { createdAt: 'desc' }, take: 1, select: { chargeId: true, status: true, failureCode: true, refundId: true, rawLast: true } },
   items: {
     orderBy: { position: 'asc' },
     select: {
@@ -79,7 +79,7 @@ interface OrderRow {
 interface OrderDetailRow extends OrderRow {
   customerEmail: string | null;
   collectedBy: Person;
-  payments: { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null }[];
+  payments: { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null; rawLast: Prisma.JsonValue }[];
   items: {
     id: string;
     productId: string;
@@ -117,8 +117,21 @@ export function orderSummary(o: OrderRow) {
   };
 }
 
-/** The newest card attempt as staff see it; null for showroom orders and unpaid web orders without an attempt. */
-export type OrderPaymentView = { chargeId: string | null; status: PaymentAttemptStatus; failureCode: string | null; refundId: string | null } | null;
+/**
+ * The newest card attempt as staff see it; null for showroom orders and unpaid
+ * web orders without an attempt. `testMode`: Tap's stored charge says
+ * live_mode false (a sandbox key, or the fake gateway).
+ */
+export type OrderPaymentView = {
+  chargeId: string | null;
+  status: PaymentAttemptStatus;
+  failureCode: string | null;
+  refundId: string | null;
+  testMode: boolean;
+} | null;
+
+const isTestCharge = (raw: Prisma.JsonValue): boolean =>
+  typeof raw === 'object' && raw !== null && !Array.isArray(raw) && raw.live_mode === false;
 
 /**
  * `bases` comes from branchBarcodeBases for the order's branch: a branch whose
@@ -129,7 +142,7 @@ export type OrderPaymentView = { chargeId: string | null; status: PaymentAttempt
 export function orderDetail(o: OrderDetailRow, bases: ReadonlyMap<number, string> | null = null, odoo: OdooOrderStatus | null = null) {
   const last = o.payments[0];
   const payment: OrderPaymentView = last
-    ? { chargeId: last.chargeId, status: last.status, failureCode: last.failureCode, refundId: last.refundId }
+    ? { chargeId: last.chargeId, status: last.status, failureCode: last.failureCode, refundId: last.refundId, testMode: isTestCharge(last.rawLast) }
     : null;
   return {
     ...orderSummary(o),

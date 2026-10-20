@@ -31,6 +31,8 @@ export class FakePaymentGateway implements PaymentGateway {
       status: 'INITIATED',
       amount: Number(input.amount),
       currency: input.currency,
+      // a test charge, as Tap's sandbox marks it
+      live_mode: false,
       reference: { order: input.orderCode, idempotent: input.paymentId, gateway: '', payment: '' },
       transaction: { created: String(Date.now()), url: input.redirectUrl },
       metadata: { orderId: input.orderId, paymentId: input.paymentId },
