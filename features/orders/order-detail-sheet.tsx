@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Check, CheckCircle2, CircleAlert, Clock, FileDown, Globe, Lock, PackageCheck, Pencil, RotateCw, TriangleAlert, Undo2 } from "lucide-react";
+import { Ban, Check, CheckCircle2, CircleAlert, CircleMinus, Clock, FileDown, Globe, Lock, PackageCheck, Pencil, RotateCw, TriangleAlert, Undo2 } from "lucide-react";
 import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
@@ -87,12 +87,18 @@ function OdooSection({ orderId, odoo, canRetry }: { orderId: string; odoo: OdooS
 
   const headingId = `odoo-${orderId}`;
   const statusId = `odoo-status-${orderId}`;
+  const notConfigured = odoo.status === "PENDING" && odoo.lastError === "ODOO_WRITE_NOT_CONFIGURED";
+  // a pending row that already failed: what went wrong last time, so a failure is never hidden behind "waiting"
+  const lastFailure = odoo.status === "PENDING" && odoo.attempts > 0 && odoo.lastError && !notConfigured ? odoo.lastError : null;
   const { Icon, tone, text } =
     odoo.status === "DONE"
       ? { Icon: CheckCircle2, tone: "text-success", text: t("odooDone", { id: isolate(String(odoo.saleOrderId ?? "—")) }) }
       : odoo.status === "PENDING"
         ? { Icon: Clock, tone: "text-ink-2", text: t("odooPending") }
-        : { Icon: CircleAlert, tone: "text-danger", text: t("odooFailed", { error: isolate(odoo.lastError ?? "—") }) };
+        : odoo.lastError === "ORDER_REFUNDED"
+          ? // not an Odoo failure: a refunded order is never sold in Odoo
+            { Icon: CircleMinus, tone: "text-ink-2", text: t("odooRefunded") }
+          : { Icon: CircleAlert, tone: "text-danger", text: t("odooFailed", { error: isolate(odoo.lastError ?? "—") }) };
 
   return (
     <section aria-labelledby={headingId} className="flex flex-wrap items-center gap-3 rounded-[var(--radius-brand-lg)] border border-line p-4">
@@ -109,8 +115,11 @@ function OdooSection({ orderId, odoo, canRetry }: { orderId: string; odoo: OdooS
             </time>
           )}
         </p>
-        {odoo.status === "PENDING" && odoo.lastError === "ODOO_WRITE_NOT_CONFIGURED" && (
-          <p className="text-sm font-semibold text-warning">{t("odooNotConfigured")}</p>
+        {notConfigured && <p className="text-sm font-semibold text-warning">{t("odooNotConfigured")}</p>}
+        {lastFailure && (
+          <p className="text-sm font-semibold break-words text-warning">
+            {t("odooAttemptFailed", { count: String(odoo.attempts), error: isolate(lastFailure) })}
+          </p>
         )}
       </div>
       {canRetry && (
@@ -132,7 +141,7 @@ function OrderDetailBody({ id }: { id: string }) {
   const { user, can } = useAuth();
   const order = useQuery({ queryKey: orderKeys.detail(id), queryFn: () => fetchOrder(id) });
   const [editing, setEditing] = useState(false);
-  const [dialog, setDialog] = useState<"confirm" | "cancel" | null>(null);
+  const [dialog, setDialog] = useState<"confirm" | "cancel" | "collect" | null>(null);
 
   const settle = (updated: OrderDetail) => {
     queryClient.setQueryData(orderKeys.detail(id), updated);
@@ -148,15 +157,6 @@ function OrderDetailBody({ id }: { id: string }) {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     }
   };
-  const collect = useMutation({
-    mutationFn: () => collectOrder(id),
-    onSuccess: (updated) => {
-      settle(updated);
-      toast.success(t("collected"));
-    },
-    onError: (error) => fail(error),
-  });
-
   if (order.isPending || order.isError) {
     return (
       <>
@@ -186,18 +186,37 @@ function OrderDetailBody({ id }: { id: string }) {
   const canRetryOdoo = can("order.odoo.retry") && o.odoo !== null && o.odoo.status !== "DONE" && o.paymentStatus !== "REFUNDED";
   const canReceipt = can("order.receipt.download");
   const locked = o.status === "CONFIRMED" && !canEdit && !canCancel;
-  // the newest card attempt's failure: the two staff must act on get a sentence, any other code is shown as Tap sent it
+  // the newest card attempt's failure: the codes staff must act on get a sentence, any other code is shown as Tap sent it
   const failureCode = o.payment?.failureCode ?? null;
-  const amountMismatchOpen = failureCode === "AMOUNT_MISMATCH" && !o.payment?.refundId && o.status !== "CANCELLED";
-  const paymentWarning = amountMismatchOpen ? t("amountMismatch") : failureCode === "DUPLICATE_CAPTURE" ? t("duplicateCapture") : null;
+  // Tap captured another amount than the total, and it has not been refunded
+  const capturedMismatch = failureCode === "AMOUNT_MISMATCH" && o.payment?.status === "CAPTURED" && !o.payment.refundId;
+  const paymentWarning = capturedMismatch
+    ? o.status === "CANCELLED"
+      ? t("amountMismatchCancelled") // cancelled without the refund (e.g. it expired first): refund it in Tap
+      : t("amountMismatch")
+    : failureCode === "DUPLICATE_CAPTURE"
+      ? t("duplicateCapture")
+      : null;
   const paymentCode = failureCode && !paymentWarning ? failureCode : null;
+  // cancelling refunds the card first (OrdersService.cancel): a paid order, or one Tap charged the wrong amount
+  const cancelRefunds = web && (o.paymentStatus === "PAID" || capturedMismatch);
   const branch = locale === "ar" ? o.branch.nameAr : o.branch.name;
 
-  const act = (action: "confirm" | "cancel") => async () => {
+  const act = (action: "confirm" | "cancel" | "collect") => async () => {
     try {
-      const updated = await api<OrderDetail>(`/orders/${id}/${action}`, { method: "POST" });
+      const updated = action === "collect" ? await collectOrder(id) : await api<OrderDetail>(`/orders/${id}/${action}`, { method: "POST" });
       settle(updated);
-      toast.success(action === "confirm" ? t("confirmed", { code: o.code }) : t("cancelled", { code: o.code }));
+      // the API answers with the order as it is now: REFUNDED when this cancel sent the money back
+      const refunded = updated.paymentStatus === "REFUNDED" && o.paymentStatus !== "REFUNDED";
+      toast.success(
+        action === "confirm"
+          ? t("confirmed", { code: o.code })
+          : action === "collect"
+            ? t("collected")
+            : refunded
+              ? t("cancelledRefunded", { code: o.code })
+              : t("cancelled", { code: o.code }),
+      );
     } catch (error) {
       fail(error);
       throw error;
@@ -434,7 +453,7 @@ function OrderDetailBody({ id }: { id: string }) {
             </Button>
           )}
           {canCollect && (
-            <Button disabled={collect.isPending} onClick={() => collect.mutate()}>
+            <Button onClick={() => setDialog("collect")}>
               <PackageCheck className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
               {t("markCollected")}
             </Button>
@@ -454,11 +473,19 @@ function OrderDetailBody({ id }: { id: string }) {
         open={dialog === "cancel"}
         onOpenChange={(open) => setDialog(open ? "cancel" : null)}
         title={t("cancelTitle", { code: isolate(o.code) })}
-        body={t("cancelBody")}
+        body={cancelRefunds ? t("cancelBodyRefund") : t("cancelBody")}
         confirmLabel={t("cancel")}
         cancelLabel={t("keep")}
         destructive
         onConfirm={act("cancel")}
+      />
+      <ConfirmDialog
+        open={dialog === "collect"}
+        onOpenChange={(open) => setDialog(open ? "collect" : null)}
+        title={t("collectTitle", { code: isolate(o.code) })}
+        body={t("collectBody")}
+        confirmLabel={t("markCollected")}
+        onConfirm={act("collect")}
       />
     </>
   );

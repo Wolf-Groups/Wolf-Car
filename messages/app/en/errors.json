@@ -56,5 +56,6 @@
   "SALES_PIN_LOCKED": "Too many wrong PINs. Try again in {minutes} min.",
   "SALES_ACCESS_REQUIRED": "Enter the PIN to continue.",
   "SHOWROOM_PIN_INVALID": "Wrong PIN.",
-  "SHOWROOM_PIN_LOCKED": "Too many wrong PINs. Try again in {minutes} min."
+  "SHOWROOM_PIN_LOCKED": "Too many wrong PINs. Try again in {minutes} min.",
+  "REFUND_FAILED": "The refund did not go through, so the order was not cancelled. Try again, or refund it in Tap."
 }

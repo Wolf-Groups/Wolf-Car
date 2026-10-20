@@ -291,3 +291,161 @@ describe("order detail: web orders", () => {
     expect(within(sheet).getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
   });
 });
+
+describe("order detail: web orders, money and Odoo (fix round 1)", () => {
+  const admin = () =>
+    makeUser({
+      username: "admin",
+      displayName: "Admin",
+      role: "SUPER_ADMIN",
+      branch: null,
+      permissions: ["order.read.all", "order.update", "order.cancel", "order.confirm", "order.receipt.download"],
+    });
+  const refundedCopy = "The order will be cancelled and the card payment refunded to the customer. This can't be undone.";
+
+  it("tells the Super Admin that cancelling a paid web order refunds the card, then says it did", async () => {
+    const order = webOrder();
+    const refunded = webOrder({
+      status: "CANCELLED",
+      paymentStatus: "REFUNDED",
+      cancelledBy: CASHIER_REF,
+      cancelledAt: "2031-03-10T10:00:00.000Z",
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+    });
+    serve(order, refunded);
+    let cancels = 0;
+    server.use(
+      http.post("/api/orders/:id/cancel", () => {
+        cancels += 1;
+        return HttpResponse.json(refunded);
+      }),
+    );
+    const { sheet, user } = await openSheet(order, admin());
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog", { name: /Cancel order .*BO-000007.*\?/ });
+    expect(within(dialog).getByText(refundedCopy)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel order" }));
+
+    await waitFor(() => expect(cancels).toBe(1));
+    expect(await screen.findByText("Order BO-000007 cancelled and the payment refunded")).toBeInTheDocument();
+  });
+
+  it("tells the cashier that cancelling an order Tap charged the wrong amount refunds that charge", async () => {
+    const order = webOrder({
+      status: "PENDING",
+      paymentStatus: "PENDING",
+      paidAt: null,
+      confirmedBy: null,
+      confirmedAt: null,
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      odoo: null,
+    });
+    serve(order);
+    const { sheet, user } = await openSheet(order);
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(refundedCopy)).toBeInTheDocument();
+  });
+
+  it("keeps the plain cancel text for an unpaid web order (nothing to refund)", async () => {
+    const order = webOrder({ status: "PENDING", paymentStatus: "PENDING", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null });
+    serve(order);
+    const { sheet, user } = await openSheet(order);
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("The order will be marked as cancelled. This can't be undone.")).toBeInTheDocument();
+    expect(within(dialog).queryByText(refundedCopy)).not.toBeInTheDocument();
+  });
+
+  it("explains a refund Tap refused, and leaves the order paid", async () => {
+    const order = webOrder();
+    serve(order);
+    server.use(
+      http.post("/api/orders/:id/cancel", () =>
+        HttpResponse.json({ statusCode: 502, error: "Bad Gateway", code: "REFUND_FAILED", message: "The refund did not go through." }, { status: 502 }),
+      ),
+    );
+    const { sheet, user } = await openSheet(order, admin());
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel order" }));
+
+    expect(await screen.findByText("The refund did not go through, so the order was not cancelled. Try again, or refund it in Tap.")).toBeInTheDocument();
+    // the dialog stays open for another try, and the order still reads as paid
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(within(sheet).getAllByText("Paid").length).toBeGreaterThan(0);
+  });
+
+  it("asks before marking an order collected, and does nothing when the cashier backs out", async () => {
+    const order = webOrder();
+    serve(order);
+    let collects = 0;
+    server.use(
+      http.post("/api/orders/:id/collect", () => {
+        collects += 1;
+        return HttpResponse.json(order);
+      }),
+    );
+    const { sheet, user } = await openSheet(order);
+    await user.click(within(sheet).getByRole("button", { name: "Mark as collected" }));
+    const dialog = await screen.findByRole("alertdialog", { name: /Mark order .*BO-000007.* as collected\?/ });
+    expect(within(dialog).getByText("Only do this when the customer has the parts in hand. This can't be undone.")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(collects).toBe(0);
+    expect(within(sheet).getByRole("button", { name: "Mark as collected" })).toBeInTheDocument();
+  });
+
+  it("says a refunded order was not sent to Odoo, as a note rather than an Odoo failure, without Retry", async () => {
+    const order = webOrder({
+      status: "CANCELLED",
+      paymentStatus: "REFUNDED",
+      cancelledBy: CASHIER_REF,
+      cancelledAt: "2031-03-10T10:00:00.000Z",
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+      odoo: { status: "FAILED", saleOrderId: null, attempts: 0, lastError: "ORDER_REFUNDED", nextAttemptAt: null },
+    });
+    serve(order);
+    const { sheet } = await openSheet(order, finance());
+    const note = within(sheet).getByText("Not sent to Odoo: the order was refunded.");
+    expect(note.closest("p")).not.toHaveClass("text-danger");
+    expect(within(sheet).queryByText(/Odoo rejected it/)).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("warns when a cancelled order's card was charged the wrong amount and never refunded", async () => {
+    // it expired before Tap's mismatched capture arrived: nobody refunded it, so staff do it in Tap
+    const order = webOrder({
+      status: "CANCELLED",
+      paymentStatus: "PENDING",
+      paidAt: null,
+      confirmedBy: null,
+      confirmedAt: null,
+      cancelledBy: SYSTEM_WEB,
+      cancelledAt: "2031-03-10T09:30:00.000Z",
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      odoo: null,
+    });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText("This card was charged but the order is cancelled. Refund the charge in Tap.")).toBeInTheDocument();
+    expect(within(sheet).queryByText(/Cancel the order to refund/)).not.toBeInTheDocument();
+  });
+
+  it("shows a pending Odoo row's last failure and how many attempts it took", async () => {
+    const order = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 2, lastError: "connect ECONNREFUSED", nextAttemptAt: "2031-03-10T09:20:00.000Z" } });
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getByText(/Waiting to be sent to Odoo/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/Attempt .*2.* failed: .*connect ECONNREFUSED/)).toBeInTheDocument();
+  });
+
+  it("shows only the set-up note, not an attempt failure, while Odoo writing is off", async () => {
+    const order = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 3, lastError: "ODOO_WRITE_NOT_CONFIGURED", nextAttemptAt: "2031-03-10T10:05:00.000Z" } });
+    serve(order);
+    const { sheet } = await openSheet(order, finance(["order.read.all"]));
+    expect(within(sheet).getByText("Odoo writing is not set up.")).toBeInTheDocument();
+    expect(within(sheet).queryByText(/Attempt .* failed/)).not.toBeInTheDocument();
+  });
+});

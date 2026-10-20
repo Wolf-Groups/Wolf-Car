@@ -270,6 +270,12 @@ describe("orders: web orders", () => {
     expect(within(row("BO-000011")).queryByText("Awaiting payment")).not.toBeInTheDocument();
   });
 
+  it("tells branch staff the list holds their showroom's and the website's orders", async () => {
+    server.use(http.get("/api/orders", () => HttpResponse.json(page(makeOrder()))));
+    renderWithApp(<OrdersPage />, { user: cashier() });
+    expect(await screen.findByText("Orders from your branch's showroom and website.")).toBeInTheDocument();
+  });
+
   it("filters by source and keeps it in the URL", async () => {
     const requests: URLSearchParams[] = [];
     server.use(

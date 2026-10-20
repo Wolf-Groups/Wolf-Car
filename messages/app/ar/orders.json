@@ -1,6 +1,6 @@
 {
   "title": "الطلبات",
-  "subtitleBranch": "الطلبات المسجّلة من معرض فرعك.",
+  "subtitleBranch": "طلبات فرعك من المعرض والموقع.",
   "subtitleAll": "طلبات جميع الفروع (للاطلاع فقط).",
   "searchCustomer": "اسم العميل",
   "searchNumber": "رقم الطلب",
@@ -75,5 +75,12 @@
   "odooFailed": "رفضه أودو: {error}",
   "odooNotConfigured": "الكتابة إلى أودو غير مفعّلة.",
   "odooRetry": "إعادة المحاولة",
-  "odooRetried": "أُعيد إرساله إلى أودو"
+  "odooRetried": "أُعيد إرساله إلى أودو",
+  "cancelBodyRefund": "سيُلغى الطلب ويُعاد المبلغ إلى بطاقة العميل، ولا يمكن التراجع عن ذلك.",
+  "cancelledRefunded": "تم إلغاء الطلب {code} واسترداد المبلغ",
+  "collectTitle": "تسجيل تسليم الطلب {code}؟",
+  "collectBody": "سجّل التسليم فقط بعد أن يستلم العميل القطع بيده، ولا يمكن التراجع عن ذلك.",
+  "amountMismatchCancelled": "حُصّل المبلغ من البطاقة لكن الطلب ملغى. استرجع هذه الدفعة من Tap.",
+  "odooRefunded": "لم يُرسل إلى أودو: استُرد مبلغ الطلب.",
+  "odooAttemptFailed": "فشلت المحاولة {count}: {error}"
 }

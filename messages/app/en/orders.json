@@ -1,6 +1,6 @@
 {
   "title": "Orders",
-  "subtitleBranch": "Orders placed in your branch's showroom.",
+  "subtitleBranch": "Orders from your branch's showroom and website.",
   "subtitleAll": "Orders from every branch (read-only).",
   "searchCustomer": "Customer name",
   "searchNumber": "Order number",
@@ -75,5 +75,12 @@
   "odooFailed": "Odoo rejected it: {error}",
   "odooNotConfigured": "Odoo writing is not set up.",
   "odooRetry": "Retry",
-  "odooRetried": "Queued for Odoo again"
+  "odooRetried": "Queued for Odoo again",
+  "cancelBodyRefund": "The order will be cancelled and the card payment refunded to the customer. This can't be undone.",
+  "cancelledRefunded": "Order {code} cancelled and the payment refunded",
+  "collectTitle": "Mark order {code} as collected?",
+  "collectBody": "Only do this when the customer has the parts in hand. This can't be undone.",
+  "amountMismatchCancelled": "This card was charged but the order is cancelled. Refund the charge in Tap.",
+  "odooRefunded": "Not sent to Odoo: the order was refunded.",
+  "odooAttemptFailed": "Attempt {count} failed: {error}"
 }

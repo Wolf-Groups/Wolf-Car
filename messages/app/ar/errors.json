@@ -56,5 +56,6 @@
   "SALES_PIN_LOCKED": "محاولات خاطئة كثيرة. حاول بعد {minutes} دقيقة.",
   "SALES_ACCESS_REQUIRED": "أدخل الرمز للمتابعة.",
   "SHOWROOM_PIN_INVALID": "الرقم السري غير صحيح.",
-  "SHOWROOM_PIN_LOCKED": "محاولات خاطئة كثيرة. حاول بعد {minutes} دقيقة."
+  "SHOWROOM_PIN_LOCKED": "محاولات خاطئة كثيرة. حاول بعد {minutes} دقيقة.",
+  "REFUND_FAILED": "لم يكتمل استرداد المبلغ، لذلك لم يُلغَ الطلب. حاول مرة أخرى أو استرده من Tap."
 }
