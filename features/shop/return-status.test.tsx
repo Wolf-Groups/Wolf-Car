@@ -237,6 +237,22 @@ describe("checkout return page", () => {
     expect(tracked().filter((t) => t === "order_paid")).toHaveLength(1);
   });
 
+  it.each([
+    ["paid", paidOrder()],
+    ["held for the branch", webOrder({ lastPayment: { status: "CAPTURED", failureCode: "AMOUNT_MISMATCH" } })],
+  ])("removes only the order's products from the basket once %s", async (_label, order) => {
+    act(() => {
+      cart.add(CART_PRODUCTS[1]);
+      cart.add({ id: "p-oil", name: "Oil Filter", price: "35.00", thumbUrl: "/api/uploads/oil-sm.webp" });
+      cart.add({ id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" });
+    });
+    listen({ reconcile: () => json(order) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+    expect(await screen.findByText("BO-000001")).toBeInTheDocument();
+    // the order holds p-cam and p-mats; the unpriced wrap and the oil filter added since stay
+    await waitFor(() => expect((storedCart() as { id: string }[]).map((l) => l.id)).toEqual(["p-oil", "p-wrap"]));
+  });
+
   // controller ruling (a): with the order, so the checkout picks it up again after the code
   it("sends a customer whose session is gone back to the checkout, with the order", async () => {
     listen({ reconcile: () => apiError(401, "SESSION_EXPIRED") });

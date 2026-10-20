@@ -165,3 +165,60 @@ describe("checkout: details step", () => {
     expect(storedCart().map((l) => l.id)).toEqual(["p-cam", "p-mats"]);
   });
 });
+
+describe("checkout: details step with lines that have no price", () => {
+  const WRAP = { id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" };
+  beforeEach(() => act(() => cart.add(WRAP)));
+
+  it("totals the priced lines only and lists the unpriced ones as not included, for WhatsApp", () => {
+    renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />);
+    expect(screen.getByText("Not included — order these on WhatsApp")).toBeInTheDocument();
+    expect(screen.getByText("PPF Full Wrap")).toBeInTheDocument();
+    // 2 × 499.00 + 120.50, the wrap left out
+    expect(screen.getByText(/1,118\.50/)).toBeInTheDocument();
+    const whatsapp = screen.getByRole("link", { name: "Order on WhatsApp · Bin Omran" });
+    const text = decodeURIComponent(whatsapp.getAttribute("href") ?? "");
+    expect(text).toContain("PPF Full Wrap");
+    expect(text).not.toContain("3D Floor Mats");
+  });
+
+  it("says it in Arabic on the Arabic site", () => {
+    renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />, { locale: "ar" });
+    expect(screen.getByText("غير مشمولة — اطلبها عبر واتساب")).toBeInTheDocument();
+  });
+
+  it("sends only the priced lines, and keeps the unpriced ones in the basket", async () => {
+    const sent = listenForOrders();
+    const onCreated = vi.fn();
+    const { user } = renderOnSite(<DetailsStep customer={customer()} onCreated={onCreated} />);
+    await user.click(screen.getByRole("button", { name: "Continue to payment" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(sent[0].body).toMatchObject({
+      items: [
+        { productId: "p-cam", quantity: 2 },
+        { productId: "p-mats", quantity: 1 },
+      ],
+    });
+    expect(storedCart().map((l) => l.id)).toEqual(["p-cam", "p-mats", "p-wrap"]);
+  });
+
+  it("removes only the products the API said are unavailable, never the unpriced ones", async () => {
+    listenForOrders(() => apiError(400, "PRODUCT_UNAVAILABLE", { message: "Some products are no longer available.", productIds: ["p-mats"] }));
+    const { user } = renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Continue to payment" }));
+    expect(await screen.findByText("One item is no longer available and was removed from your cart.")).toBeInTheDocument();
+    expect(storedCart().map((l) => l.id)).toEqual(["p-cam", "p-wrap"]);
+  });
+
+  it("cannot continue when no line has a price", async () => {
+    act(() => {
+      cart.setQty("p-cam", 0);
+      cart.setQty("p-mats", 0);
+    });
+    const sent = listenForOrders();
+    renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Continue to payment" })).toBeDisabled();
+    expect(sent).toEqual([]);
+  });
+});

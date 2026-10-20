@@ -1,18 +1,20 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { Icon } from "@/components/Icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cart, type CartLine, useCart } from "@/features/catalog/cart";
+import { cart, type CartLine, orderMessage, useCart } from "@/features/catalog/cart";
 import { newIdempotencyKey } from "@/features/showroom/idempotency";
 import { ApiError } from "@/lib/api/client";
 import { fieldErrors } from "@/lib/api/errors";
 import type { CustomerProfile, WebOrder, WebOrderItem } from "@/lib/api/types";
+import { getBranches, waLink } from "@/lib/branches";
 import { track } from "@/lib/track";
 import { CUSTOMER_EMAIL_MAX, EMAIL_PATTERN } from "@/shared/shop";
 import { CUSTOMER_NAME_MAX, CUSTOMER_NAME_MIN, CUSTOMER_NAME_PATTERN } from "@/shared/validation";
@@ -42,29 +44,31 @@ type Values = z.output<typeof schema>;
 const halalas = (price: string) => Math.round(Number(price) * 100);
 const money = (halalasValue: number) => (halalasValue / 100).toFixed(2);
 
-/** The basket as order lines, for the summary only: the API prices the order itself. */
-function basketSummary(lines: CartLine[]): { items: WebOrderItem[]; total: string } {
+type PricedLine = CartLine & { price: string };
+
+/** The priced lines as order lines, for the summary only: the API prices the order itself. */
+function basketSummary(lines: PricedLine[]): { items: WebOrderItem[]; total: string } {
   let total = 0;
   const items = lines.map((l) => {
-    const line = l.price === null ? null : halalas(l.price) * l.qty;
-    total += line ?? 0;
-    return {
-      productId: l.id,
-      productName: l.name,
-      unitPrice: l.price ?? "",
-      quantity: l.qty,
-      lineTotal: line === null ? "" : money(line),
-      thumbUrl: l.thumbUrl,
-    };
+    const line = halalas(l.price) * l.qty;
+    total += line;
+    return { productId: l.id, productName: l.name, unitPrice: l.price, quantity: l.qty, lineTotal: money(line), thumbUrl: l.thumbUrl };
   });
   return { items, total: money(total) };
 }
 
-/** Step 3: name and email over the basket; creates the unpaid order so the server total is shown before the card. */
+/**
+ * Step 3: name and email over the basket; creates the unpaid order so the server total is shown before the card.
+ * Only priced lines are ordered and paid; the unpriced ones stay in the basket, for WhatsApp.
+ */
 export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
   const t = useTranslations("Checkout");
+  const tc = useTranslations("Cart");
+  const locale = useLocale() === "ar" ? "ar" : "en";
   const message = useCheckoutError();
-  const lines = useCart();
+  const basket = useCart();
+  const lines = basket.filter((l): l is PricedLine => l.price !== null);
+  const unpriced = basket.filter((l) => l.price === null);
   const [error, setError] = useState<string | null>(null);
   /** `checkout_start` counts the first press of this visit to the step, not every retry */
   const [started, setStarted] = useState(false);
@@ -110,6 +114,36 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
         </h2>
         <OrderLines items={summary.items} total={summary.total} currency="QAR" />
       </section>
+
+      {unpriced.length > 0 && (
+        <section aria-labelledby="checkout-unpriced" className="grid gap-2 rounded-[var(--radius-brand)] bg-sand px-4 py-3">
+          <h3 id="checkout-unpriced" className="text-[15px] font-bold text-ink-2">
+            {t("unpricedExcluded")}
+          </h3>
+          <ul className="grid gap-1 text-[14px]">
+            {unpriced.map((l) => (
+              <li key={l.id} className="flex items-baseline gap-2">
+                <span dir="auto" className="min-w-0 flex-1 text-start font-semibold">
+                  {l.name}
+                </span>
+                <span dir="ltr" className="shrink-0 text-ink-2 tabular-nums">
+                  ×{l.qty}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <a
+            href={waLink(locale, "binomran", orderMessage(unpriced, locale))}
+            target="_blank"
+            rel="noopener"
+            data-track="whatsapp_order"
+            className="inline-flex min-h-11 w-fit items-center gap-2 rounded-[var(--radius-brand)] border-[1.5px] border-wa/50 bg-surface px-4 text-[14px] font-bold text-ink hover:border-wa hover:bg-wa/5"
+          >
+            <Icon name="wa" className="size-5 text-wa" />
+            {tc("checkout", { branch: getBranches(locale).binomran.short })}
+          </a>
+        </section>
+      )}
 
       <div className="grid gap-4">
         <div className="grid gap-2">

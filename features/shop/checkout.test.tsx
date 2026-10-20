@@ -56,6 +56,14 @@ describe("checkout page", () => {
     expect(await screen.findByText("الدفع بالبطاقة غير متاح بعد. اطلب عبر واتساب بدلًا من ذلك.")).toBeInTheDocument();
   });
 
+  it("has nothing to pay by card when no line has a price, and offers WhatsApp for them", async () => {
+    act(() => cart.add({ id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" }));
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+    expect(await screen.findByText("Nothing in your cart has a price yet, so it can't be paid by card. Order it on WhatsApp instead.")).toBeInTheDocument();
+    expect(decodeURIComponent(screen.getByRole("link", { name: "Order on WhatsApp · Bin Omran" }).getAttribute("href") ?? "")).toContain("PPF Full Wrap");
+    expect(screen.queryByLabelText("Mobile number")).not.toBeInTheDocument();
+  });
+
   it("starts at the phone number without asking the API when the browser has no customer hint", async () => {
     fillCart();
     const me = vi.fn();

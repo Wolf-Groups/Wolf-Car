@@ -90,10 +90,11 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       seen = true;
       const outcome = outcomeOf(o);
       if (outcome === null) return next();
-      // the money was taken either way: the basket is bought, but only a paid order counts as a sale
+      // the money was taken either way: the order's products are bought, but only a paid order counts as a sale.
+      // Only those leave the basket: unpriced lines (for WhatsApp) and anything added since stay
       if ((outcome === "paid" || outcome === "review") && !basketCleared.current) {
         basketCleared.current = true;
-        if (firstTimeInTab("basket", o.id)) cart.clear();
+        if (firstTimeInTab("basket", o.id)) o.items.forEach((item) => cart.setQty(item.productId, 0));
       }
       if (outcome === "paid" && !saleReported.current) {
         saleReported.current = true;

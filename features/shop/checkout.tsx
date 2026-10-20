@@ -173,6 +173,9 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
   // the pay step stays: its order already holds the lines, whatever happens to the basket meanwhile
   if (lines.length === 0 && state.step !== "pay") return <CheckoutNotice message={t("empty")} />;
 
+  // unpriced lines are never paid by card: a basket of only those has nothing to pay here
+  if (!lines.some((l) => l.price !== null) && state.step !== "pay") return <CheckoutNotice message={t("noPricedItems")} whatsapp={lines} />;
+
   const current = STEPS.indexOf(state.step);
 
   return (

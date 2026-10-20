@@ -258,7 +258,9 @@
       "ALREADY_PAID": "This order is already paid.",
       "generic": "Something went wrong. Please try again."
     },
-    "cardUnavailable": "Card payment isn't available yet. Order on WhatsApp instead."
+    "cardUnavailable": "Card payment isn't available yet. Order on WhatsApp instead.",
+    "unpricedExcluded": "Not included — order these on WhatsApp",
+    "noPricedItems": "Nothing in your cart has a price yet, so it can't be paid by card. Order it on WhatsApp instead."
   },
   "Packages": {
     "metaTitle": "Packages and services | Wolf Car Auto Services",
