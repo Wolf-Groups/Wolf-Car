@@ -253,6 +253,33 @@ describe("order detail: web orders", () => {
     expect(within(sheet).queryByRole("button", { name: "Mark as collected" })).not.toBeInTheDocument();
   });
 
+  it("shows a web order cancelled before it was paid as cancelled, not awaiting payment", async () => {
+    const expired = webOrder({
+      status: "CANCELLED",
+      paymentStatus: "PENDING",
+      paidAt: null,
+      confirmedBy: null,
+      confirmedAt: null,
+      cancelledBy: SYSTEM_WEB,
+      cancelledAt: "2031-03-10T09:30:00.000Z",
+      payment: null,
+      odoo: null,
+    });
+    serve(expired);
+    const { sheet } = await openSheet(expired);
+    expect(within(sheet).getByText("Cancelled")).toBeInTheDocument();
+    expect(within(sheet).queryByText("Awaiting payment")).not.toBeInTheDocument();
+  });
+
+  it("shows an order paid after it expired as paid, without the expiry's cancellation", async () => {
+    // the webhook captured it after the 30-minute expiry: confirmed and paid, cancelledAt kept from the expiry
+    const latePaid = webOrder({ paidAt: "2031-03-10T10:00:00.000Z", cancelledBy: SYSTEM_WEB, cancelledAt: "2031-03-10T09:30:00.000Z" });
+    serve(latePaid);
+    const { sheet } = await openSheet(latePaid);
+    expect(within(sheet).getAllByText("Paid").length).toBeGreaterThan(0);
+    expect(within(sheet).queryByText(/Cancelled by/)).not.toBeInTheDocument();
+  });
+
   it("never offers Edit or Confirm on a web order: the card payment confirms it", async () => {
     const unpaid = webOrder({ status: "PENDING", paymentStatus: "PENDING", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null });
     serve(unpaid);

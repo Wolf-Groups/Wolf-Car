@@ -1,13 +1,13 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Check, CheckCircle2, FileDown, Lock, Pencil } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Ban, Check, CheckCircle2, CircleAlert, Clock, FileDown, Globe, Lock, PackageCheck, Pencil, RotateCw, TriangleAlert, Undo2 } from "lucide-react";
 import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Barcode } from "@/components/barcode";
-import { OrderStatusBadge } from "@/components/app/badges";
+import { OrderPaymentBadge, OrderStatusBadge, Pill } from "@/components/app/badges";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { ErrorState, LoadingRows } from "@/components/app/states";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,22 @@ import { api, ApiError } from "@/lib/api/client";
 import type { OrderDetail } from "@/lib/api/types";
 import { useErrorMessage } from "@/lib/api/use-error-message";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { localQatarNumber } from "@/shared/shop";
 import { OrderEditor } from "./order-editor";
-import { fetchOrder, orderKeys } from "./queries";
+import { collectOrder, fetchOrder, orderKeys, retryOdoo } from "./queries";
 import { downloadReceipt } from "./receipt";
 
-function Meta({ label, children }: { label: string; children: ReactNode }) {
+/** "+97455123456" → "+974 5512 3456" (anything else as stored). */
+function prettyPhone(e164: string): string {
+  if (!/^\+974\d{8}$/.test(e164)) return e164;
+  const local = localQatarNumber(e164);
+  return `+974 ${local.slice(0, 4)} ${local.slice(4)}`;
+}
+
+function Meta({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
-    <div className="grid min-w-0 gap-0.5">
+    <div className={cn("grid min-w-0 gap-0.5", className)}>
       <dt className="text-[13px] font-bold text-muted">{label}</dt>
       <dd className="min-w-0 text-[15px] break-words">{children}</dd>
     </div>
@@ -57,6 +66,63 @@ function ReceiptButton({ order, lang, disabled, describedBy }: { order: OrderDet
   );
 }
 
+type OdooState = NonNullable<OrderDetail["odoo"]>;
+
+/** Where a paid web order stands in Odoo, with Finance's Retry while it is not there yet. */
+function OdooSection({ orderId, odoo, canRetry }: { orderId: string; odoo: OdooState; canRetry: boolean }) {
+  const t = useTranslations("Orders");
+  const locale = useLocale();
+  const message = useErrorMessage();
+  const queryClient = useQueryClient();
+  const retry = useMutation({
+    mutationFn: () => retryOdoo(orderId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(orderKeys.detail(orderId), updated);
+      toast.success(t("odooRetried"));
+    },
+    onError: (error) => toast.error(message(error)),
+    // reload either way: the outbox may have moved on (or the order is no longer queued)
+    onSettled: () => queryClient.invalidateQueries({ queryKey: orderKeys.detail(orderId) }),
+  });
+
+  const headingId = `odoo-${orderId}`;
+  const statusId = `odoo-status-${orderId}`;
+  const { Icon, tone, text } =
+    odoo.status === "DONE"
+      ? { Icon: CheckCircle2, tone: "text-success", text: t("odooDone", { id: isolate(String(odoo.saleOrderId ?? "—")) }) }
+      : odoo.status === "PENDING"
+        ? { Icon: Clock, tone: "text-ink-2", text: t("odooPending") }
+        : { Icon: CircleAlert, tone: "text-danger", text: t("odooFailed", { error: isolate(odoo.lastError ?? "—") }) };
+
+  return (
+    <section aria-labelledby={headingId} className="flex flex-wrap items-center gap-3 rounded-[var(--radius-brand-lg)] border border-line p-4">
+      <div className="grid min-w-0 flex-1 gap-1">
+        <h3 id={headingId} className="text-[13px] font-bold text-muted">
+          {t("odoo")}
+        </h3>
+        <p id={statusId} className={cn("flex flex-wrap items-start gap-x-2 gap-y-0.5 text-[15px] font-semibold", tone)}>
+          <Icon className="mt-[3px] size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+          <span className="min-w-0 break-words">{text}</span>
+          {odoo.status === "PENDING" && odoo.nextAttemptAt && (
+            <time dateTime={odoo.nextAttemptAt} className="font-normal text-muted">
+              {formatDateTime(odoo.nextAttemptAt, locale)}
+            </time>
+          )}
+        </p>
+        {odoo.status === "PENDING" && odoo.lastError === "ODOO_WRITE_NOT_CONFIGURED" && (
+          <p className="text-sm font-semibold text-warning">{t("odooNotConfigured")}</p>
+        )}
+      </div>
+      {canRetry && (
+        <Button variant="outline" size="sm" disabled={retry.isPending} aria-describedby={statusId} onClick={() => retry.mutate()}>
+          <RotateCw className={cn("size-4", retry.isPending && "motion-safe:animate-spin")} strokeWidth={1.8} aria-hidden="true" />
+          {t("odooRetry")}
+        </Button>
+      )}
+    </section>
+  );
+}
+
 function OrderDetailBody({ id }: { id: string }) {
   const t = useTranslations("Orders");
   const tc = useTranslations("Common");
@@ -67,6 +133,29 @@ function OrderDetailBody({ id }: { id: string }) {
   const order = useQuery({ queryKey: orderKeys.detail(id), queryFn: () => fetchOrder(id) });
   const [editing, setEditing] = useState(false);
   const [dialog, setDialog] = useState<"confirm" | "cancel" | null>(null);
+
+  const settle = (updated: OrderDetail) => {
+    queryClient.setQueryData(orderKeys.detail(id), updated);
+    void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
+    void queryClient.invalidateQueries({ queryKey: ["stats"] });
+  };
+  const fail = (error: unknown) => {
+    toast.error(message(error));
+    if (error instanceof ApiError && (error.status === 409 || error.status === 404)) {
+      // someone else changed it (e.g. ORDER_NOT_PENDING): show the current state
+      setDialog(null);
+      setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    }
+  };
+  const collect = useMutation({
+    mutationFn: () => collectOrder(id),
+    onSuccess: (updated) => {
+      settle(updated);
+      toast.success(t("collected"));
+    },
+    onError: (error) => fail(error),
+  });
 
   if (order.isPending || order.isError) {
     return (
@@ -85,28 +174,25 @@ function OrderDetailBody({ id }: { id: string }) {
   const o = order.data;
   const isAdmin = user?.role === "SUPER_ADMIN";
   const pending = o.status === "PENDING";
-  // gated by permission AND state; the Super Admin may override the "pending only" rule (the API allows it)
-  const canEdit = can("order.update") && (pending || isAdmin);
-  const canConfirm = can("order.confirm") && pending;
+  const web = o.source === "WEB";
+  // gated by permission AND state; the Super Admin may override the "pending only" rule (the API allows it).
+  // A web order is never edited (its total is what the card was charged) nor confirmed by staff (the payment confirms it).
+  const canEdit = !web && can("order.update") && (pending || isAdmin);
+  const canConfirm = !web && can("order.confirm") && pending;
   const canCancel = can("order.cancel") && (pending || (isAdmin && o.status === "CONFIRMED"));
+  // handing a paid web order over at the counter, once
+  const canCollect = web && can("order.confirm") && o.status === "CONFIRMED" && o.paymentStatus === "PAID" && !o.collectedAt;
+  // a refunded order is never sold in Odoo (its row fails with ORDER_REFUNDED), and one already there needs nothing
+  const canRetryOdoo = can("order.odoo.retry") && o.odoo !== null && o.odoo.status !== "DONE" && o.paymentStatus !== "REFUNDED";
   const canReceipt = can("order.receipt.download");
   const locked = o.status === "CONFIRMED" && !canEdit && !canCancel;
+  // the newest card attempt's failure: the two staff must act on get a sentence, any other code is shown as Tap sent it
+  const failureCode = o.payment?.failureCode ?? null;
+  const amountMismatchOpen = failureCode === "AMOUNT_MISMATCH" && !o.payment?.refundId && o.status !== "CANCELLED";
+  const paymentWarning = amountMismatchOpen ? t("amountMismatch") : failureCode === "DUPLICATE_CAPTURE" ? t("duplicateCapture") : null;
+  const paymentCode = failureCode && !paymentWarning ? failureCode : null;
   const branch = locale === "ar" ? o.branch.nameAr : o.branch.name;
 
-  const settle = (updated: OrderDetail) => {
-    queryClient.setQueryData(orderKeys.detail(id), updated);
-    void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
-    void queryClient.invalidateQueries({ queryKey: ["stats"] });
-  };
-  const fail = (error: unknown) => {
-    toast.error(message(error));
-    if (error instanceof ApiError && (error.status === 409 || error.status === 404)) {
-      // someone else changed it (e.g. ORDER_NOT_PENDING): show the current state
-      setDialog(null);
-      setEditing(false);
-      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
-    }
-  };
   const act = (action: "confirm" | "cancel") => async () => {
     try {
       const updated = await api<OrderDetail>(`/orders/${id}/${action}`, { method: "POST" });
@@ -123,6 +209,13 @@ function OrderDetailBody({ id }: { id: string }) {
       <div className="flex flex-wrap items-center gap-2">
         <SheetTitle>{t("detailTitle", { code: isolate(o.code) })}</SheetTitle>
         <OrderStatusBadge status={o.status} />
+        {web && (
+          <Pill>
+            <Globe className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            {t("web")}
+          </Pill>
+        )}
+        <OrderPaymentBadge order={o} />
       </div>
       <SheetDescription>{t("placedLine", { date: formatDateTime(o.createdAt, locale), name: isolate(o.createdBy.displayName) })}</SheetDescription>
     </SheetHeader>
@@ -142,6 +235,12 @@ function OrderDetailBody({ id }: { id: string }) {
     <>
       {header}
       <SheetBody className="grid grid-cols-1 content-start gap-5 pb-4">
+        {paymentWarning && (
+          <p className="flex items-start gap-2 rounded-[var(--radius-brand)] bg-danger-soft px-3 py-2.5 text-sm font-semibold text-danger">
+            <TriangleAlert className="mt-px size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            {paymentWarning}
+          </p>
+        )}
         {locked && (
           <p className="flex items-center gap-2 rounded-[var(--radius-brand)] bg-sand px-3 py-2.5 text-sm font-semibold text-ink-2">
             <Lock className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
@@ -157,12 +256,61 @@ function OrderDetailBody({ id }: { id: string }) {
               </span>
             </Meta>
             <Meta label={tc("branch")}>{branch}</Meta>
+            {o.customerPhone && (
+              <Meta label={t("customerPhone")}>
+                <a href={`tel:${o.customerPhone}`} dir="ltr" className="font-semibold text-accent-ink underline underline-offset-2">
+                  {prettyPhone(o.customerPhone)}
+                </a>
+              </Meta>
+            )}
+            {o.customerEmail && (
+              <Meta label={t("customerEmail")}>
+                <a href={`mailto:${o.customerEmail}`} dir="ltr" className="break-all text-accent-ink underline underline-offset-2">
+                  {o.customerEmail}
+                </a>
+              </Meta>
+            )}
             <Meta label={t("placedBy")}>
               <span dir="auto">{o.createdBy.displayName}</span>
             </Meta>
             <Meta label={t("placedAt")}>
               <time dateTime={o.createdAt}>{formatDateTime(o.createdAt, locale)}</time>
             </Meta>
+            {web && (
+              <Meta label={t("payment")} className="col-span-2">
+                {o.payment?.chargeId || o.paidAt || paymentCode || o.payment?.refundId ? (
+                  <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {o.payment?.chargeId && (
+                      // the end of Tap's charge id: enough to find the charge in Tap's dashboard
+                      <span dir="ltr" className="font-mono text-sm">
+                        …{o.payment.chargeId.slice(-8)}
+                      </span>
+                    )}
+                    {o.paidAt && (
+                      <time dateTime={o.paidAt} className="text-ink-2">
+                        {formatDateTime(o.paidAt, locale)}
+                      </time>
+                    )}
+                    {paymentCode && (
+                      <span dir="ltr" className="font-mono text-sm font-bold text-danger">
+                        {paymentCode}
+                      </span>
+                    )}
+                    {o.payment?.refundId && (
+                      <span className="inline-flex flex-wrap items-center gap-x-1.5">
+                        <Undo2 className="size-4 shrink-0 text-ink-2 rtl:-scale-x-100" strokeWidth={1.8} aria-hidden="true" />
+                        <span className="font-bold">{t("paymentRefunded")}</span>
+                        <span dir="ltr" className="font-mono text-sm break-all">
+                          {o.payment.refundId}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </Meta>
+            )}
           </dl>
           {o.confirmedBy && o.confirmedAt && (
             <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-success">
@@ -173,7 +321,7 @@ function OrderDetailBody({ id }: { id: string }) {
               </time>
             </p>
           )}
-          {o.cancelledBy && o.cancelledAt && (
+          {o.status === "CANCELLED" && o.cancelledBy && o.cancelledAt && (
             <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-danger">
               <Ban className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
               <span className="font-bold">{t("cancelledBy", { name: isolate(o.cancelledBy.displayName) })}</span>
@@ -182,7 +330,16 @@ function OrderDetailBody({ id }: { id: string }) {
               </time>
             </p>
           )}
+          {o.collectedAt && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-ink-2">
+              <PackageCheck className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+              <span className="font-bold text-ink">{o.collectedBy ? t("collectedBy", { name: isolate(o.collectedBy.displayName) }) : t("collected")}</span>
+              <time dateTime={o.collectedAt}>{formatDateTime(o.collectedAt, locale)}</time>
+            </p>
+          )}
         </div>
+
+        {web && o.odoo && <OdooSection orderId={o.id} odoo={o.odoo} canRetry={canRetryOdoo} />}
 
         <section aria-labelledby={`lines-${o.id}`} className="grid gap-2">
           <h3 id={`lines-${o.id}`} className="text-sm font-bold text-ink-2">
@@ -256,7 +413,7 @@ function OrderDetailBody({ id }: { id: string }) {
         )}
       </SheetBody>
 
-      {(canEdit || canCancel || canConfirm) && (
+      {(canEdit || canCancel || canConfirm || canCollect) && (
         <SheetFooter className="flex-wrap">
           {canEdit && (
             <Button variant="outline" onClick={() => setEditing(true)}>
@@ -274,6 +431,12 @@ function OrderDetailBody({ id }: { id: string }) {
             <Button onClick={() => setDialog("confirm")}>
               <Check className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
               {t("confirm")}
+            </Button>
+          )}
+          {canCollect && (
+            <Button disabled={collect.isPending} onClick={() => collect.mutate()}>
+              <PackageCheck className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
+              {t("markCollected")}
             </Button>
           )}
         </SheetFooter>

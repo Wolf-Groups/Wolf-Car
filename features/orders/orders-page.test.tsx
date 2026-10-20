@@ -259,6 +259,17 @@ describe("orders: web orders", () => {
     expect(within(row("GH-000042")).queryByText(/Paid|Awaiting payment|Refunded|Collected/)).not.toBeInTheDocument();
   });
 
+  it("shows no payment badge on a web order cancelled before it was paid", async () => {
+    const expired = web("BO-000011", { status: "CANCELLED", paymentStatus: "PENDING", cancelledBy: systemWeb, cancelledAt: "2026-09-21T09:30:00.000Z" });
+    server.use(http.get("/api/orders", () => HttpResponse.json(page(expired))));
+    renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order BO-000011" });
+
+    expect(within(row("BO-000011")).getByText("Web")).toBeInTheDocument();
+    expect(within(row("BO-000011")).getByText("Cancelled")).toBeInTheDocument();
+    expect(within(row("BO-000011")).queryByText("Awaiting payment")).not.toBeInTheDocument();
+  });
+
   it("filters by source and keeps it in the URL", async () => {
     const requests: URLSearchParams[] = [];
     server.use(

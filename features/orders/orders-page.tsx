@@ -1,11 +1,11 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { RefreshCw, X } from "lucide-react";
+import { Globe, RefreshCw, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
 import { useMemo } from "react";
-import { OrderStatusBadge } from "@/components/app/badges";
+import { OrderPaymentBadge, OrderStatusBadge, Pill } from "@/components/app/badges";
 import { Field } from "@/components/app/field";
 import { PageHeader } from "@/components/app/page-header";
 import { PhoneFilters } from "@/components/app/phone-filters";
@@ -18,7 +18,7 @@ import { useAuth } from "@/features/auth/auth-provider";
 import { isolate } from "@/features/products/bidi";
 import { Segmented } from "@/features/products/segmented";
 import { api } from "@/lib/api/client";
-import type { BranchOption, OrderStatusName, OrderSummary } from "@/lib/api/types";
+import type { BranchOption, OrderSourceName, OrderStatusName, OrderSummary } from "@/lib/api/types";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { fast } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -154,7 +154,16 @@ function OrdersTable({
                   <span>{formatMoney(o.total, locale)}</span>
                 </td>
                 <td className={cn(td, "max-md:order-2")}>
-                  <OrderStatusBadge status={o.status} />
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <OrderStatusBadge status={o.status} />
+                    {o.source === "WEB" && (
+                      <Pill>
+                        <Globe className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                        {t("web")}
+                      </Pill>
+                    )}
+                    <OrderPaymentBadge order={o} />
+                  </span>
                 </td>
                 <td className={cn(td, "text-sm whitespace-nowrap max-md:order-7 max-md:w-full")}>
                   <time dateTime={o.createdAt} className="block text-ink-2">
@@ -236,6 +245,11 @@ function OrdersManager() {
     { value: "ALL", label: tc("all") },
     ...ORDER_STATUSES.map((s) => ({ value: s, label: tc(`orderStatus.${s}`) })),
   ];
+  const sourceOptions: { value: OrderSourceName | "ALL"; label: string }[] = [
+    { value: "ALL", label: t("sourceAll") },
+    { value: "SHOWROOM", label: t("sourceShowroom") },
+    { value: "WEB", label: t("sourceWeb") },
+  ];
 
   let body;
   if (orders.isPending) body = <LoadingRows rows={8} className="h-14" />;
@@ -267,12 +281,20 @@ function OrdersManager() {
 
       <section aria-label={tc("filters")} className="mb-4 grid grid-cols-1 gap-4 rounded-[var(--radius-brand-lg)] border border-line p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Segmented
-            label={tc("status")}
-            value={state.status || "ALL"}
-            options={statusOptions}
-            onChange={(v) => setFilter({ status: v === "ALL" ? "" : v })}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented
+              label={tc("status")}
+              value={state.status || "ALL"}
+              options={statusOptions}
+              onChange={(v) => setFilter({ status: v === "ALL" ? "" : v })}
+            />
+            <Segmented
+              label={t("source")}
+              value={state.source || "ALL"}
+              options={sourceOptions}
+              onChange={(v) => setFilter({ source: v === "ALL" ? "" : v })}
+            />
+          </div>
           {filtered && (
             <Button variant="ghost" size="sm" onClick={clear}>
               <X aria-hidden="true" />
