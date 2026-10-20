@@ -184,7 +184,7 @@ Online checkout (all optional locally; see *Payments (Tap)* for what production 
 | Variable | Default | Purpose |
 |---|---|---|
 | `API_INTERNAL_URL` | `http://localhost:4000` | Where the Next.js server reaches the API (`/api/*` rewrite and the catalog page). Read at **build** time for the rewrite. |
-| `NEXT_PUBLIC_TAP_PUBLIC_KEY` | — | Tap **public** key for the card form (`pk_test_…`, later `pk_live_…`). Read by the checkout page on the web server. Without it the checkout page shows no card form. Locally: `.env.local` (git-ignored) |
+| `NEXT_PUBLIC_TAP_PUBLIC_KEY` | — | Tap **public** key for the card form (`pk_test_…`, later `pk_live_…`). **Baked in at build time** (`next build` inlines every `NEXT_PUBLIC_*`), so changing it means rebuilding. It is the launch switch: built with an empty key, the basket offers WhatsApp only and `/checkout` says card payment is not available yet. Locally: `.env.local` (git-ignored); production: `deploy/prod.env`, passed to the Docker build by `compose.prod.yml`. `npm run e2e:build` uses a stand-in key when none is set |
 | `NEXT_PUBLIC_TAP_MERCHANT_ID` | — | Tap merchant id (not secret). Optional, in `.env.local` |
 
 ## 6. Tests
@@ -341,7 +341,7 @@ WEB_PUBLIC_URL=http://localhost:3000
 API_PUBLIC_URL=http://localhost:4000
 ```
 
-Restart the API. Sign-in codes appear in the API log. The fake gateway keeps charges in memory, so restarting the API forgets them. The card form still loads Tap's script, so for a full click-through use Tap test keys (next section); the Playwright story (`e2e/checkout.spec.ts`) replaces the card form with a stub and needs neither.
+Restart the API. Sign-in codes appear in the API log. The fake gateway keeps charges in memory, so restarting the API forgets them. The website shows *Pay by card* only when it was started or built with a non-empty `NEXT_PUBLIC_TAP_PUBLIC_KEY` (in `.env.local`); without one it is WhatsApp-only, as in production before launch. The card form still loads Tap's script, so for a full click-through use Tap test keys (next section); the Playwright story (`e2e/checkout.spec.ts`) replaces the card form with a stub and needs neither (`npm run e2e:build` bakes a stand-in public key).
 
 ### Run it locally with Tap test keys
 
@@ -365,7 +365,7 @@ Server (`deploy/api.prod.env`, see `deploy/api.prod.env.example`):
 
 - [ ] `PAYMENTS_PROVIDER=tap` and `TAP_SECRET_KEY=sk_live_…`.
 - [ ] `WEB_PUBLIC_URL` and `API_PUBLIC_URL` both `https://wolfcar.qa` (one origin behind Caddy). Tap must reach `POST /api/shop/payments/tap/webhook` from the internet: check that Caddy and any firewall let it through.
-- [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` for the **web** process. It is not an API setting, and `compose.prod.yml` does not pass it to the web container yet: add it there (and check whether it is needed at build time) before the first live test.
+- [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` in `deploy/prod.env` (not `api.prod.env`). It is baked into the website when `scripts/deploy.sh` builds it, so set it **before** the deploy that launches card payments. Until it is set the site stays WhatsApp-only, which is how to keep card checkout off while the rest is deployed.
 - [ ] Run one API process. The Odoo queue and the expiry sweep run inside it.
 
 **Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `ALLOW_TEST_CHECKOUT=true`, `SMS_PROVIDER=console` with real customers. With `NODE_ENV=production` the API refuses to start with `fake` or `OTP_DEV_CODE_IN_RESPONSE=true` unless `ALLOW_TEST_CHECKOUT=true`, and refuses both next to an `sk_live_` key whatever the flag says.

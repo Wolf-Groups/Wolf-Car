@@ -1,5 +1,5 @@
 import { act, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderOnSite } from "@/tests/render-site";
 import { cart } from "./cart";
 import { CartSheet } from "./cart-sheet";
@@ -7,11 +7,17 @@ import { CartSheet } from "./cart-sheet";
 vi.mock("@/lib/track", () => ({ track: vi.fn() }));
 
 const MATS = { id: "p-mats", name: "3D Floor Mats", price: "120.50", thumbUrl: "/api/uploads/mats-sm.webp" };
+const WRAP = { id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" };
 
-afterEach(() => act(() => cart.clear()));
+// the build carries Tap's public key unless a test says otherwise: card checkout is on
+beforeEach(() => vi.stubEnv("NEXT_PUBLIC_TAP_PUBLIC_KEY", "pk_test_wolfcar"));
+afterEach(() => {
+  act(() => cart.clear());
+  vi.unstubAllEnvs();
+});
 
-async function openCart(locale: "ar" | "en" = "en") {
-  act(() => cart.add(MATS));
+async function openCart(locale: "ar" | "en" = "en", first: typeof MATS | typeof WRAP = MATS) {
+  act(() => cart.add(first));
   const view = renderOnSite(<CartSheet />, { locale });
   await view.user.click(screen.getByRole("button", { name: locale === "ar" ? /عرض السلة/ : /View cart/ }));
   return { ...view, sheet: await screen.findByRole("dialog") };
@@ -72,5 +78,47 @@ describe("cart drawer", () => {
     expect(
       within(sheet).getByText("منتج واحد بلا سعر بعد. المنتجات غير المسعّرة تُطلب عبر واتساب فقط، ولا يشملها الدفع بالبطاقة."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("cart drawer without card checkout", () => {
+  const whatsappOnly = "Send this list on WhatsApp to our Bin Omran branch and the team confirms stock and fit.";
+
+  it("offers WhatsApp only, as the main button, when the build has no Tap public key", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TAP_PUBLIC_KEY", "");
+    const { sheet } = await openCart();
+    expect(within(sheet).queryByRole("link", { name: "Pay by card" })).not.toBeInTheDocument();
+    expect(within(sheet).queryByText("or order on WhatsApp")).not.toBeInTheDocument();
+    const whatsapp = within(sheet).getByRole("link", { name: "Order on WhatsApp · Bin Omran" });
+    expect(whatsapp).toHaveClass("bg-wa");
+    expect(within(sheet).getByText(whatsappOnly)).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/Pay by card|card payment/);
+  });
+
+  it("says so in Arabic on the Arabic site", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TAP_PUBLIC_KEY", "");
+    const { sheet } = await openCart("ar");
+    expect(within(sheet).queryByRole("link", { name: "الدفع بالبطاقة" })).not.toBeInTheDocument();
+    expect(within(sheet).getByText("أرسل القائمة عبر واتساب إلى فرع بن عمران ليؤكد الفريق التوفر والتوافق.")).toBeInTheDocument();
+  });
+
+  it("does not mention card payments in the unpriced note when card checkout is off", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TAP_PUBLIC_KEY", "");
+    act(() => cart.add(WRAP));
+    const { sheet } = await openCart();
+    expect(within(sheet).getByText("1 item has no price yet: the branch gives you its price on WhatsApp.")).toBeInTheDocument();
+  });
+
+  it("offers no Pay by card when no line has a price", async () => {
+    const { sheet } = await openCart("en", WRAP);
+    expect(within(sheet).queryByRole("link", { name: "Pay by card" })).not.toBeInTheDocument();
+    expect(within(sheet).getByRole("link", { name: "Order on WhatsApp · Bin Omran" })).toHaveClass("bg-wa");
+    expect(within(sheet).getByText(whatsappOnly)).toBeInTheDocument();
+  });
+
+  it("still offers Pay by card when at least one line has a price", async () => {
+    act(() => cart.add(WRAP));
+    const { sheet } = await openCart();
+    expect(within(sheet).getByRole("link", { name: "Pay by card" })).toHaveAttribute("href", "/checkout");
   });
 });

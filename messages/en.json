@@ -199,7 +199,9 @@
     "payByCard": "Pay by card",
     "orWhatsapp": "or order on WhatsApp",
     "clear": "Empty cart",
-    "close": "Close"
+    "close": "Close",
+    "descriptionWhatsapp": "Send this list on WhatsApp to our {branch} branch and the team confirms stock and fit.",
+    "unpricedNoteWhatsapp": "{count, plural, one {# item has no price yet: the branch gives you its price} other {# items have no price yet: the branch gives you their prices}} on WhatsApp."
   },
   "Checkout": {
     "title": "Checkout",
@@ -255,7 +257,8 @@
       "CHECKOUT_UNAVAILABLE": "Online payment isn't available right now. Order on WhatsApp instead.",
       "ALREADY_PAID": "This order is already paid.",
       "generic": "Something went wrong. Please try again."
-    }
+    },
+    "cardUnavailable": "Card payment isn't available yet. Order on WhatsApp instead."
   },
   "Packages": {
     "metaTitle": "Packages and services | Wolf Car Auto Services",

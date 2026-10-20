@@ -3,9 +3,11 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useReducer, useRef, useState } from "react";
+import { Icon } from "@/components/Icon";
 import { buttonVariants } from "@/components/ui/button";
-import { useCart } from "@/features/catalog/cart";
+import { type CartLine, orderMessage, useCart } from "@/features/catalog/cart";
 import { Link, useRouter } from "@/i18n/navigation";
+import { getBranches, waLink } from "@/lib/branches";
 import type { WebOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { localQatarNumber } from "@/shared/shop";
@@ -18,7 +20,7 @@ import { ORDER_ID_PATTERN, shop } from "./shop-api";
 import { type CustomerSession, useCustomer } from "./use-customer";
 
 export interface CheckoutProps {
-  /** NEXT_PUBLIC_TAP_PUBLIC_KEY */
+  /** NEXT_PUBLIC_TAP_PUBLIC_KEY (card-checkout.ts); empty: card checkout is off */
   publicKey: string;
 }
 
@@ -52,8 +54,49 @@ function paidOrHeld(order: WebOrder): boolean {
   return order.paymentStatus === "PAID" || (order.lastPayment?.status === "CAPTURED" && order.lastPayment.failureCode !== null);
 }
 
-/** The whole checkout: `useReducer(reduce, initialState)` over the four steps, or `empty` with a link to the catalogue. */
+/**
+ * A message in place of the steps, with the way back to the products and,
+ * for a basket, the way to order it on WhatsApp instead.
+ */
+function CheckoutNotice({ message, whatsapp = [] }: { message: string; whatsapp?: CartLine[] }) {
+  const t = useTranslations("Checkout");
+  const tc = useTranslations("Cart");
+  const locale = useLocale() === "ar" ? "ar" : "en";
+  return (
+    <div className="grid justify-items-start gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
+      <p className="text-[17px] text-ink-2">{message}</p>
+      <div className="flex flex-wrap gap-3">
+        {whatsapp.length > 0 && (
+          <a
+            href={waLink(locale, "binomran", orderMessage(whatsapp, locale))}
+            target="_blank"
+            rel="noopener"
+            data-track="whatsapp_order"
+            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-wa px-5 text-[15px] font-bold text-white hover:brightness-95"
+          >
+            <Icon name="wa" className="size-5" />
+            {tc("checkout", { branch: getBranches(locale).binomran.short })}
+          </a>
+        )}
+        <Link href="/products" className={cn(buttonVariants({ variant: whatsapp.length > 0 ? "outline" : "default", size: "lg" }))}>
+          {t("backToCatalog")}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** The checkout, or, in a build without Tap's public key, the note that card payment is not available yet. */
 export function Checkout({ publicKey }: CheckoutProps) {
+  const t = useTranslations("Checkout");
+  const lines = useCart();
+  // the launch switch: no key, no card checkout (and no session or order requests)
+  if (!publicKey) return <CheckoutNotice message={t("cardUnavailable")} whatsapp={lines} />;
+  return <CheckoutFlow publicKey={publicKey} />;
+}
+
+/** The whole checkout: `useReducer(reduce, initialState)` over the four steps, or `empty` with a link to the catalogue. */
+function CheckoutFlow({ publicKey }: CheckoutProps) {
   const t = useTranslations("Checkout");
   const locale = useLocale() === "ar" ? "ar" : "en";
   const lines = useCart();
@@ -128,16 +171,7 @@ export function Checkout({ publicKey }: CheckoutProps) {
   }
 
   // the pay step stays: its order already holds the lines, whatever happens to the basket meanwhile
-  if (lines.length === 0 && state.step !== "pay") {
-    return (
-      <div className="grid justify-items-start gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
-        <p className="text-[17px] text-ink-2">{t("empty")}</p>
-        <Link href="/products" className={cn(buttonVariants({ size: "lg" }))}>
-          {t("backToCatalog")}
-        </Link>
-      </div>
-    );
-  }
+  if (lines.length === 0 && state.step !== "pay") return <CheckoutNotice message={t("empty")} />;
 
   const current = STEPS.indexOf(state.step);
 

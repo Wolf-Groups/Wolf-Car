@@ -36,6 +36,26 @@ describe("checkout page", () => {
     expect(screen.queryByLabelText("Mobile number")).not.toBeInTheDocument();
   });
 
+  it("says card payment is not available yet, and offers WhatsApp, when the build has no Tap public key", async () => {
+    fillCart();
+    const me = vi.fn();
+    server.use(http.get("/api/shop/me", () => (me(), HttpResponse.json(customer()))));
+    renderOnSite(<Checkout publicKey="" />);
+    expect(await screen.findByText("Card payment isn't available yet. Order on WhatsApp instead.")).toBeInTheDocument();
+    const whatsapp = screen.getByRole("link", { name: "Order on WhatsApp · Bin Omran" });
+    expect(whatsapp.getAttribute("href")).toMatch(/^https:\/\/wa\.me\/97471008939\?text=/);
+    expect(decodeURIComponent(whatsapp.getAttribute("href") ?? "")).toContain("4K Dash Cam (Front & Rear)");
+    expect(screen.getByRole("link", { name: "Back to products" })).toHaveAttribute("href", "/products");
+    expect(screen.queryByLabelText("Mobile number")).not.toBeInTheDocument();
+    expect(me).not.toHaveBeenCalled();
+  });
+
+  it("says card payment is not available yet in Arabic", async () => {
+    fillCart();
+    renderOnSite(<Checkout publicKey="" />, { locale: "ar" });
+    expect(await screen.findByText("الدفع بالبطاقة غير متاح بعد. اطلب عبر واتساب بدلًا من ذلك.")).toBeInTheDocument();
+  });
+
   it("starts at the phone number without asking the API when the browser has no customer hint", async () => {
     fillCart();
     const me = vi.fn();

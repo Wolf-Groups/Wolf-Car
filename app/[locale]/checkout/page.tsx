@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { Wrap } from "@/components/Button";
 import { Footer } from "@/components/Footer";
 import { SubpageHeader } from "@/components/SubpageHeader";
+import { tapPublicKey } from "@/features/shop/card-checkout";
 import { Checkout } from "@/features/shop/checkout";
 import { routing } from "@/i18n/routing";
 
@@ -35,8 +36,8 @@ export default async function CheckoutPage({ params }: { params: Promise<{ local
             <h1 className="text-[clamp(26px,5vw,34px)] leading-tight font-extrabold">{t("title")}</h1>
             {/* Checkout reads ?order= ("Try another card"), so it renders in the browser only */}
             <Suspense fallback={<div aria-busy="true" className="h-56 animate-pulse rounded-[var(--radius-brand-lg)] border border-line bg-surface" />}>
-              {/* read at build time; an empty key leaves the card form unconfigured */}
-              <Checkout publicKey={process.env.NEXT_PUBLIC_TAP_PUBLIC_KEY ?? ""} />
+              {/* baked in at build time; an empty key turns card checkout off */}
+              <Checkout publicKey={tapPublicKey()} />
             </Suspense>
           </div>
         </Wrap>
