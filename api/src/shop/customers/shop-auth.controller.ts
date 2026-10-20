@@ -10,6 +10,7 @@ import { AuthThrottle } from '../../common/decorators/auth-throttle.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { Env } from '../../config/env';
 import { SendOtpDto, VerifyOtpDto } from '../dto/shop.dto';
+import { CsrfGuard } from './csrf.guard';
 import { CurrentCustomer } from './current-customer.decorator';
 import { CustomerGuard } from './customer.guard';
 import { CustomersService, type CustomerPrincipal, type CustomerProfileView } from './customers.service';
@@ -42,6 +43,7 @@ export class ShopAuthController {
   }
 
   /** Sends a code. Same answer whether or not the phone is known. */
+  @UseGuards(CsrfGuard)
   @AuthThrottle()
   @Audit('shop.otp.send', { entity: 'Customer' })
   @Post('otp')
@@ -52,6 +54,7 @@ export class ShopAuthController {
   }
 
   /** Sets the httpOnly wc_cst cookie (path /api/shop) and the readable wc_customer hint. */
+  @UseGuards(CsrfGuard)
   @AuthThrottle()
   @Audit('shop.otp.verify', { entity: 'Customer' })
   @Post('otp/verify')

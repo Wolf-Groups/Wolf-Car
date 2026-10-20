@@ -57,6 +57,28 @@ describe('Customer sign-in by phone code (e2e)', () => {
     expect(await t.prisma.customer.count()).toBe(0);
   });
 
+  // a cross-site HTML form (urlencoded, no preflight) cannot set the header
+  it('sends no code without the CSRF header, before even reading the number', async () => {
+    for (const body of ['phone=55123456', 'phone=abc']) {
+      const res = await t.http().post('/api/shop/otp').type('form').send(body);
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF');
+    }
+    expect(await t.prisma.customerOtp.count()).toBe(0);
+  });
+
+  it('signs no one in without the CSRF header, even with the right code', async () => {
+    const code = await sendAndRead('55123456');
+    const res = await t.http().post('/api/shop/otp/verify').type('form').send(`phone=55123456&code=${code}`);
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('CSRF');
+    expect(customerCookieOf(res)).toBe('');
+    expect(await t.prisma.customerOtp.findFirstOrThrow()).toMatchObject({ attempts: 0, consumedAt: null });
+    expect(await t.prisma.customer.count()).toBe(0);
+    // the code still works from the website
+    expect((await verify('55123456', code)).status).toBe(200);
+  });
+
   it('accepts the number as people type it: Arabic digits, spaces, a country code', async () => {
     // three spellings: the fourth code within 15 minutes would be refused (OTP_PER_PHONE_PER_15_MIN)
     for (const phone of ['٥٥١٢٣٤٥٦', '+974 5512 3456', '00974-55123456']) {

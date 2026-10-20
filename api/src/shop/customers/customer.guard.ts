@@ -1,7 +1,8 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuditTrail } from '../../activity/audit-trail.service';
 import { hasCsrfHeader, readCustomerCookie } from '../../auth/cookies';
+import { csrfRefused } from './csrf.guard';
 import { CustomersService, type CustomerPrincipal } from './customers.service';
 
 export interface CustomerRequest extends Request {
@@ -26,9 +27,7 @@ export class CustomerGuard implements CanActivate {
     const customer = await this.customers.loadFromToken(readCustomerCookie(req));
     req.customer = customer;
     this.trail.setActor({ id: null, username: customer.phone, role: null, branchId: null });
-    if (req.method !== 'GET' && !hasCsrfHeader(req)) {
-      throw new ForbiddenException({ statusCode: 403, error: 'Forbidden', code: 'CSRF', message: 'Missing request header.' });
-    }
+    if (req.method !== 'GET' && !hasCsrfHeader(req)) throw csrfRefused();
     return true;
   }
 }
