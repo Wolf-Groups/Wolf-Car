@@ -428,8 +428,11 @@ Web: `NEXT_PUBLIC_TAP_PUBLIC_KEY` (`pk_test_…`), read at build time.
    warehouse is Bin Omran in the test database?
 3. **Refund policy page**: Tap and the acquiring bank ask for one before live
    keys. Who writes it?
-4. **Tap account**: has merchant onboarding started? Live keys and the
-   domain registration for the public key are needed before launch.
+4. **Tap account**: done on 2026-10-20. Merchant ID `68094460`; test and live
+   keys are issued in Tap's dashboard. Still needed before launch: Tap must
+   register `wolfcar.qa` for the live public key (email integrations@tap.company).
+   Keys live only in `api/.env` / `.env.local` locally and in the server's
+   env files, never in git or chat.
 5. **Odoo taxes**: if the products carry a sales tax in Odoo, a sale order
    line with `price_unit` = the price paid gets that tax added on confirm and
    Odoo's total will not match the Tap amount. Phase 1 sends the paid unit
