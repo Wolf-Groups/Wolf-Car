@@ -376,12 +376,15 @@ Check in the Tap sandbox before launch (the fake gateway cannot tell you):
 - [ ] Tap refuses a second refund of the same charge (two staff cancelling at once rely on it).
 - [ ] The card form's valid/invalid events: *Pay* recovers after a corrected card.
 - [ ] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`).
+- [ ] The refund object's `status` values. The API treats `INITIATED`, `PENDING`, `IN_PROGRESS` and `REFUNDED` (any case) as accepted and anything else as `502 REFUND_FAILED` with the status as the reason: check which values a sandbox refund really returns, and that a refused one is not among the four.
+- [ ] The return URL survives Tap appending `tap_id`: Tap sends the customer back to `/checkout/return?order=<id>&tap_id=chg_…`, and the page must still read `order`.
+- [ ] Whether the card SDK requires `merchant.id` (`NEXT_PUBLIC_TAP_MERCHANT_ID`, optional today): if it does, set it before launch.
 
 ### Limits of phase 1
 
 - Pickup at Bin Omran only; no delivery, no stock check; products without a price are ordered on WhatsApp.
 - No e-mail receipt: the customer shows the order code at the branch.
-- Refunding an order that is already in Odoo does **not** reverse the Odoo sale order; the accountant reverses it by hand.
+- Refunding an order that is already in Odoo does **not** reverse the Odoo sale order; the accountant reverses it by hand. The dashboard says so in the cancel dialog and on the refunded order ("Refunded after it reached Odoo: cancel sale order N in Odoo").
 - Apple Pay and Google Pay, delivery and stock come in phase 2; public PPF booking with a deposit in phase 3.
 - Design and open questions: `docs/superpowers/specs/2026-10-18-online-checkout-phase1-design.md`.
 
