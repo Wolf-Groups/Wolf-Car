@@ -16,7 +16,8 @@ export function paymentGatewayFactory(config: ConfigService<Env, true>): Payment
   if (config.get('PAYMENTS_PROVIDER', { infer: true }) === 'fake') return new FakePaymentGateway();
   const secretKey = config.get('TAP_SECRET_KEY', { infer: true });
   if (secretKey)
-    return new TapClient({ apiUrl: config.get('TAP_API_URL', { infer: true }), secretKey });
+    // TapClient appends "/charges" etc.: "…/v2/" in the settings must not become "…/v2//charges"
+    return new TapClient({ apiUrl: config.get('TAP_API_URL', { infer: true }).replace(/\/+$/, ''), secretKey });
   return null;
 }
 
