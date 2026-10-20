@@ -152,6 +152,87 @@ export class Env {
   @Min(0)
   @Max(1440)
   ODOO_SYNC_MINUTES = 15;
+
+  /** Tap Payments secret key (sk_test_… or sk_live_…). Never logged. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  TAP_SECRET_KEY?: string;
+
+  @IsString()
+  @Matches(/^https?:\/\//, { message: 'TAP_API_URL must start with http:// or https://' })
+  TAP_API_URL = 'https://api.tap.company/v2';
+
+  /** "fake" is the in-memory gateway used by the tests. */
+  @IsIn(['tap', 'fake'])
+  PAYMENTS_PROVIDER: 'tap' | 'fake' = 'tap';
+
+  /** The website's public origin: where Tap sends the customer back to. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @Matches(/^https?:\/\//, { message: 'WEB_PUBLIC_URL must start with http:// or https://' })
+  WEB_PUBLIC_URL?: string;
+
+  /** The API's public origin: where Tap posts its webhook. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @Matches(/^https?:\/\//, { message: 'API_PUBLIC_URL must start with http:// or https://' })
+  API_PUBLIC_URL?: string;
+
+  /** Code of the branch that holds website orders for pickup. */
+  @IsString()
+  @IsNotEmpty()
+  WEB_ORDERS_BRANCH_CODE = 'BO';
+
+  /** Minutes an unpaid website order is held before it expires. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  CHECKOUT_TTL_MINUTES = 30;
+
+  @IsIn(['console'])
+  SMS_PROVIDER = 'console' as const;
+
+  /** Returns the one-time code in the API response. Development only. */
+  @Transform(toBool)
+  @IsBoolean()
+  OTP_DEV_CODE_IN_RESPONSE = false;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  OTP_PER_PHONE_PER_15_MIN = 3;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  CUSTOMER_SESSION_TTL_DAYS = 30;
+
+  /** Odoo user that writes paid website orders. Separate from the read-only catalogue user. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  ODOO_WRITE_LOGIN?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  ODOO_WRITE_API_KEY?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? (value.trim() === '' ? undefined : Number(value)) : value))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  ODOO_WEB_WAREHOUSE_ID?: number;
+
+  @Transform(({ value }) => (typeof value === 'string' ? (value.trim() === '' ? undefined : Number(value)) : value))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  ODOO_FALLBACK_PRODUCT_ID?: number;
 }
 
 export function validateEnv(raw: Record<string, unknown>): Env {
@@ -162,6 +243,9 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .map((e) => `  - ${e.property}: ${Object.values(e.constraints ?? {}).join('; ')}`)
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${details}`);
+  }
+  if (env.OTP_DEV_CODE_IN_RESPONSE && env.TAP_SECRET_KEY?.startsWith('sk_live_')) {
+    throw new Error('Invalid environment configuration:\n  - OTP_DEV_CODE_IN_RESPONSE: must be false when TAP_SECRET_KEY is a live key');
   }
   return env;
 }

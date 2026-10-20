@@ -15,6 +15,10 @@ export const SITE_EVENT_TYPES = [
   'add_to_cart',
   /** a car model opened on the products page */
   'model_view',
+  /** the customer pressed Pay on the checkout details step */
+  'checkout_start',
+  /** the return page confirmed a paid order */
+  'order_paid',
 ] as const;
 export type SiteEventType = (typeof SITE_EVENT_TYPES)[number];
 

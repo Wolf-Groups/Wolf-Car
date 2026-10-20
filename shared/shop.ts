@@ -2,10 +2,6 @@
  * Rules of the website's online checkout, shared by the API and the web app
  * so both accept and reject the same input. Keep this file free of imports:
  * it is compiled into both projects.
- *
- * Scaffold: the constants are final; `normaliseQatarPhone` and
- * `localQatarNumber` are implemented in Task 1 of
- * docs/superpowers/plans/2026-10-18-online-checkout-phase1.md.
  */
 
 /** Qatar's country code, without the "+". */
@@ -18,12 +14,16 @@ export const QATAR_COUNTRY_CODE = '974';
  * landlines (4…) and foreign numbers. Phase 1 serves Qatar only.
  */
 export function normaliseQatarPhone(input: string): string | null {
-  throw new Error(`TODO(phase1): normaliseQatarPhone(${JSON.stringify(input)})`);
+  // Same fold as normaliseDigits in validation.ts, copied so this file stays import-free.
+  const folded = input.replace(/[٠-٩۰-۹]/g, (d) => String(d.charCodeAt(0) & 0xf));
+  if (!/^\s*\+?[\d\s()-]+$/.test(folded)) return null;
+  const digits = folded.replace(/\D/g, '').replace(/^(00974|974)/, '');
+  return /^[3567]\d{7}$/.test(digits) ? `+${QATAR_COUNTRY_CODE}${digits}` : null;
 }
 
 /** "+97455123456" → "55123456" (what Tap wants next to country_code 974). */
 export function localQatarNumber(e164: string): string {
-  throw new Error(`TODO(phase1): localQatarNumber(${JSON.stringify(e164)})`);
+  return e164.replace(/^\+?974/, '');
 }
 
 export const OTP_LENGTH = 6;
