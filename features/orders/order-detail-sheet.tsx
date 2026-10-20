@@ -69,7 +69,7 @@ function ReceiptButton({ order, lang, disabled, describedBy }: { order: OrderDet
 type OdooState = NonNullable<OrderDetail["odoo"]>;
 
 /** Where a paid web order stands in Odoo, with Finance's Retry while it is not there yet. */
-function OdooSection({ orderId, odoo, canRetry }: { orderId: string; odoo: OdooState; canRetry: boolean }) {
+function OdooSection({ orderId, odoo, canRetry, refunded }: { orderId: string; odoo: OdooState; canRetry: boolean; refunded: boolean }) {
   const t = useTranslations("Orders");
   const locale = useLocale();
   const message = useErrorMessage();
@@ -90,9 +90,13 @@ function OdooSection({ orderId, odoo, canRetry }: { orderId: string; odoo: OdooS
   const notConfigured = odoo.status === "PENDING" && odoo.lastError === "ODOO_WRITE_NOT_CONFIGURED";
   // a pending row that already failed: what went wrong last time, so a failure is never hidden behind "waiting"
   const lastFailure = odoo.status === "PENDING" && odoo.attempts > 0 && odoo.lastError && !notConfigured ? odoo.lastError : null;
+  const saleOrder = isolate(String(odoo.saleOrderId ?? "—"));
   const { Icon, tone, text } =
     odoo.status === "DONE"
-      ? { Icon: CheckCircle2, tone: "text-success", text: t("odooDone", { id: isolate(String(odoo.saleOrderId ?? "—")) }) }
+      ? refunded
+        ? // the card was refunded after Odoo took the sale: the accountant cancels it there by hand
+          { Icon: TriangleAlert, tone: "text-warning", text: t("odooRefundedAfter", { id: saleOrder }) }
+        : { Icon: CheckCircle2, tone: "text-success", text: t("odooDone", { id: saleOrder }) }
       : odoo.status === "PENDING"
         ? { Icon: Clock, tone: "text-ink-2", text: t("odooPending") }
         : odoo.lastError === "ORDER_REFUNDED"
@@ -200,6 +204,10 @@ function OrderDetailBody({ id }: { id: string }) {
   const paymentCode = failureCode && !paymentWarning ? failureCode : null;
   // cancelling refunds the card first (OrdersService.cancel): a paid order, or one Tap charged the wrong amount
   const cancelRefunds = web && (o.paymentStatus === "PAID" || capturedMismatch);
+  // a refund does not reverse the Odoo sale order: say so before, and after (OdooSection)
+  const inOdoo = o.odoo?.status === "DONE";
+  // the card paid it: the cashier hands the parts over and takes no money
+  const paidOnline = web && o.paymentStatus === "PAID";
   const branch = locale === "ar" ? o.branch.nameAr : o.branch.name;
 
   const act = (action: "confirm" | "cancel" | "collect") => async () => {
@@ -260,6 +268,12 @@ function OrderDetailBody({ id }: { id: string }) {
             {paymentWarning}
           </p>
         )}
+        {paidOnline && (
+          <p className="flex items-start gap-2 rounded-[var(--radius-brand)] bg-success-soft px-3 py-2.5 text-sm font-bold text-success">
+            <CheckCircle2 className="mt-px size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            {t("paidOnline")}
+          </p>
+        )}
         {locked && (
           <p className="flex items-center gap-2 rounded-[var(--radius-brand)] bg-sand px-3 py-2.5 text-sm font-semibold text-ink-2">
             <Lock className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
@@ -299,6 +313,12 @@ function OrderDetailBody({ id }: { id: string }) {
               <Meta label={t("payment")} className="col-span-2">
                 {o.payment?.chargeId || o.paidAt || paymentCode || o.payment?.refundId ? (
                   <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {o.payment?.testMode && (
+                      <span title={t("testPaymentHint")}>
+                        <Pill tone="warning">{t("testPayment")}</Pill>
+                        <span className="sr-only"> {t("testPaymentHint")}</span>
+                      </span>
+                    )}
                     {o.payment?.chargeId && (
                       // the end of Tap's charge id: enough to find the charge in Tap's dashboard
                       <span dir="ltr" className="font-mono text-sm">
@@ -358,7 +378,7 @@ function OrderDetailBody({ id }: { id: string }) {
           )}
         </div>
 
-        {web && o.odoo && <OdooSection orderId={o.id} odoo={o.odoo} canRetry={canRetryOdoo} />}
+        {web && o.odoo && <OdooSection orderId={o.id} odoo={o.odoo} canRetry={canRetryOdoo} refunded={o.paymentStatus === "REFUNDED"} />}
 
         <section aria-labelledby={`lines-${o.id}`} className="grid gap-2">
           <h3 id={`lines-${o.id}`} className="text-sm font-bold text-ink-2">
@@ -397,10 +417,11 @@ function OrderDetailBody({ id }: { id: string }) {
                     {formatMoney(item.lineTotal, locale)}
                   </span>
                 </span>
-                {item.barcode && (
+                {item.barcode && !web && (
                   // scannable: the cashier reads this straight off the screen
                   // into the till system, so the bars matter more than the digits.
                   // A row of its own, so a phone shows every bar at full size.
+                  // Never on a web order: the card paid it, the till must not ring it up again.
                   <Barcode value={item.barcode} className="basis-full [&>svg]:h-auto [&>svg]:max-w-full" />
                 )}
               </li>
@@ -473,7 +494,20 @@ function OrderDetailBody({ id }: { id: string }) {
         open={dialog === "cancel"}
         onOpenChange={(open) => setDialog(open ? "cancel" : null)}
         title={t("cancelTitle", { code: isolate(o.code) })}
-        body={cancelRefunds ? t("cancelBodyRefund") : t("cancelBody")}
+        body={
+          cancelRefunds ? (
+            inOdoo ? (
+              <>
+                <span className="block">{t("cancelBodyRefund")}</span>
+                <span className="mt-2 block font-semibold text-warning">{t("cancelRefundInOdoo", { id: isolate(String(o.odoo?.saleOrderId ?? "—")) })}</span>
+              </>
+            ) : (
+              t("cancelBodyRefund")
+            )
+          ) : (
+            t("cancelBody")
+          )
+        }
         confirmLabel={t("cancel")}
         cancelLabel={t("keep")}
         destructive

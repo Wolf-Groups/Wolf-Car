@@ -82,5 +82,10 @@
   "collectBody": "Only do this when the customer has the parts in hand. This can't be undone.",
   "amountMismatchCancelled": "This card was charged but the order is cancelled. Refund the charge in Tap.",
   "odooRefunded": "Not sent to Odoo: the order was refunded.",
-  "odooAttemptFailed": "Attempt {count} failed: {error}"
+  "odooAttemptFailed": "Attempt {count} failed: {error}",
+  "paidOnline": "Paid online — nothing to collect at the till",
+  "odooRefundedAfter": "Refunded after it reached Odoo: cancel sale order {id} in Odoo",
+  "cancelRefundInOdoo": "It is already in Odoo: after the refund, cancel sale order {id} in Odoo.",
+  "testPayment": "TEST",
+  "testPaymentHint": "Paid with Tap's test keys: no real money moved."
 }

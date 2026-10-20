@@ -35,7 +35,7 @@ function webOrder(overrides: Partial<OrderDetail> = {}): OrderDetail {
     customerPhone: "+97455123456",
     customerEmail: "sara@example.com",
     collectedBy: null,
-    payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: null },
+    payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: null, testMode: false },
     odoo: { status: "DONE", saleOrderId: 4711, attempts: 1, lastError: null, nextAttemptAt: null },
     total: "619.50",
     currency: "QAR",
@@ -111,7 +111,7 @@ describe("order detail: web orders", () => {
       paidAt: null,
       confirmedBy: null,
       confirmedAt: null,
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null, testMode: false },
       odoo: null,
     });
     serve(order);
@@ -122,7 +122,7 @@ describe("order detail: web orders", () => {
 
   it("flags a second charge on a paid order so staff refund that charge in Tap", async () => {
     // plan Task 6: the order stays paid by the first charge; the newest attempt is the duplicate
-    const order = webOrder({ payment: { chargeId: SECOND_CHARGE, status: "CAPTURED", failureCode: "DUPLICATE_CAPTURE", refundId: null } });
+    const order = webOrder({ payment: { chargeId: SECOND_CHARGE, status: "CAPTURED", failureCode: "DUPLICATE_CAPTURE", refundId: null, testMode: false } });
     serve(order);
     const { sheet } = await openSheet(order);
     expect(within(sheet).getByText("Charged twice — refund this charge in Tap")).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe("order detail: web orders", () => {
       paymentStatus: "REFUNDED",
       cancelledBy: CASHIER_REF,
       cancelledAt: "2031-03-10T10:00:00.000Z",
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678", testMode: false },
     });
     serve(order);
     const { sheet } = await openSheet(order);
@@ -151,7 +151,7 @@ describe("order detail: web orders", () => {
       confirmedBy: null,
       confirmedAt: null,
       odoo: null,
-      payment: { chargeId: CHARGE, status: "FAILED", failureCode: "DECLINED", refundId: null },
+      payment: { chargeId: CHARGE, status: "FAILED", failureCode: "DECLINED", refundId: null, testMode: false },
     });
     serve(order);
     const { sheet } = await openSheet(order);
@@ -310,7 +310,7 @@ describe("order detail: web orders, money and Odoo (fix round 1)", () => {
       paymentStatus: "REFUNDED",
       cancelledBy: CASHIER_REF,
       cancelledAt: "2031-03-10T10:00:00.000Z",
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678", testMode: false },
     });
     serve(order, refunded);
     let cancels = 0;
@@ -337,7 +337,7 @@ describe("order detail: web orders, money and Odoo (fix round 1)", () => {
       paidAt: null,
       confirmedBy: null,
       confirmedAt: null,
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null, testMode: false },
       odoo: null,
     });
     serve(order);
@@ -403,7 +403,7 @@ describe("order detail: web orders, money and Odoo (fix round 1)", () => {
       paymentStatus: "REFUNDED",
       cancelledBy: CASHIER_REF,
       cancelledAt: "2031-03-10T10:00:00.000Z",
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678" },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678", testMode: false },
       odoo: { status: "FAILED", saleOrderId: null, attempts: 0, lastError: "ORDER_REFUNDED", nextAttemptAt: null },
     });
     serve(order);
@@ -424,7 +424,7 @@ describe("order detail: web orders, money and Odoo (fix round 1)", () => {
       confirmedAt: null,
       cancelledBy: SYSTEM_WEB,
       cancelledAt: "2031-03-10T09:30:00.000Z",
-      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null },
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: "AMOUNT_MISMATCH", refundId: null, testMode: false },
       odoo: null,
     });
     serve(order);
@@ -447,5 +447,110 @@ describe("order detail: web orders, money and Odoo (fix round 1)", () => {
     const { sheet } = await openSheet(order, finance(["order.read.all"]));
     expect(within(sheet).getByText("Odoo writing is not set up.")).toBeInTheDocument();
     expect(within(sheet).queryByText(/Attempt .* failed/)).not.toBeInTheDocument();
+  });
+});
+
+describe("order detail: what the counter must know (final review)", () => {
+  const admin = () =>
+    makeUser({
+      username: "admin",
+      displayName: "Admin",
+      role: "SUPER_ADMIN",
+      branch: null,
+      permissions: ["order.read.all", "order.update", "order.cancel", "order.confirm", "order.receipt.download"],
+    });
+  const PAID_ONLINE = "Paid online — nothing to collect at the till";
+  const refunded = (odoo: OrderDetail["odoo"]) =>
+    webOrder({
+      status: "CANCELLED",
+      paymentStatus: "REFUNDED",
+      cancelledBy: CASHIER_REF,
+      cancelledAt: "2031-03-10T10:00:00.000Z",
+      payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: "rf_fake_12345678", testMode: false },
+      odoo,
+    });
+  const showroomOrder = () =>
+    webOrder({ source: "SHOWROOM", paymentStatus: "NONE", paidAt: null, customerPhone: null, customerEmail: null, payment: null, odoo: null, createdBy: CASHIER_REF, confirmedBy: CASHIER_REF });
+
+  it("tells the cashier a paid web order has nothing to collect at the till", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText(PAID_ONLINE)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["an unpaid web order", webOrder({ status: "PENDING", paymentStatus: "PENDING", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null })],
+    ["a refunded web order", refunded({ status: "FAILED", saleOrderId: null, attempts: 0, lastError: "ORDER_REFUNDED", nextAttemptAt: null })],
+    ["a showroom order", showroomOrder()],
+  ])("says nothing about the till for %s", async (_label, order) => {
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).queryByText(PAID_ONLINE)).not.toBeInTheDocument();
+  });
+
+  it("shows no bars to scan on a web order (the card paid it), and keeps them on a showroom order", async () => {
+    const web = webOrder();
+    serve(web);
+    const first = await openSheet(web);
+    expect(within(first.sheet).queryByText("6291041500244")).not.toBeInTheDocument();
+    expect(first.sheet.querySelector("svg[aria-label*='6291041500244'], svg title")).toBeNull();
+    first.unmount();
+
+    const showroom = showroomOrder();
+    serve(showroom);
+    const { sheet } = await openSheet(showroom);
+    expect(within(sheet).getByText("6291041500244")).toBeInTheDocument();
+  });
+
+  it("warns when an order was refunded after it reached Odoo, naming the sale order to cancel there", async () => {
+    const order = refunded({ status: "DONE", saleOrderId: 4711, attempts: 1, lastError: null, nextAttemptAt: null });
+    serve(order);
+    const { sheet } = await openSheet(order, finance());
+    const warning = within(sheet).getByText(/^Refunded after it reached Odoo: cancel sale order .?4711.? in Odoo$/);
+    expect(warning.closest("p")).toHaveClass("text-warning");
+    // not only the green "created in Odoo" line
+    expect(within(sheet).queryByText(/Sale order .*4711.* created in Odoo/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the green Odoo line for a paid order that is in Odoo", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order, finance());
+    expect(within(sheet).getByText(/Sale order .*4711.* created in Odoo/)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/Refunded after it reached Odoo/)).not.toBeInTheDocument();
+  });
+
+  it("says in the refund dialog that an order already in Odoo must be cancelled there too", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet, user } = await openSheet(order, admin());
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("The order will be cancelled and the card payment refunded to the customer. This can't be undone.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/^It is already in Odoo: after the refund, cancel sale order .?4711.? in Odoo\.$/)).toBeInTheDocument();
+  });
+
+  it("leaves the Odoo note out of the refund dialog while the order is not in Odoo yet", async () => {
+    const order = webOrder({ odoo: { status: "PENDING", saleOrderId: null, attempts: 0, lastError: null, nextAttemptAt: "2031-03-10T09:06:00.000Z" } });
+    serve(order);
+    const { sheet, user } = await openSheet(order, admin());
+    await user.click(within(sheet).getByRole("button", { name: "Cancel order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).queryByText(/already in Odoo/)).not.toBeInTheDocument();
+  });
+
+  it("marks a payment made in Tap's test mode with a TEST badge", async () => {
+    const order = webOrder({ payment: { chargeId: CHARGE, status: "CAPTURED", failureCode: null, refundId: null, testMode: true } });
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).getByText("TEST")).toBeInTheDocument();
+  });
+
+  it("shows no TEST badge on a live payment", async () => {
+    const order = webOrder();
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).queryByText("TEST")).not.toBeInTheDocument();
   });
 });
