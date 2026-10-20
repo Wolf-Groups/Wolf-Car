@@ -21,8 +21,10 @@ export interface CreateChargeInput {
 
 export interface RefundInput {
   chargeId: string;
+  /** What Tap captured, "100.00". */
   amount: string;
-  currency: 'QAR';
+  /** The captured attempt's currency. */
+  currency: string;
   reason: string;
 }
 

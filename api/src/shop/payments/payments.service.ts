@@ -12,7 +12,7 @@ import { WEB_ORDER_SELECT, webOrderView, type WebOrderView } from '../checkout/w
 import type { CustomerPrincipal } from '../customers/customers.service';
 import type { PayDto } from '../dto/shop.dto';
 import { type GatewayRefund, PAYMENT_GATEWAY, type PaymentGateway, PaymentGatewayError } from './payment-gateway';
-import { chargeOutcome, sameAmount, type TapCharge } from './tap-charge';
+import { chargeOutcome, formatTapAmount, sameAmount, type TapCharge } from './tap-charge';
 import { verifyTapSignature } from './tap-signature';
 
 export type SettleOutcome = 'paid' | 'already_paid' | 'failed' | 'pending' | 'amount_mismatch' | 'duplicate_capture' | 'unknown_charge';
@@ -51,6 +51,20 @@ const code64 = (code: unknown): string => String(code).slice(0, 64);
 
 /** The stored charge object: Tap's JSON as received (card data is only first_six/last_four). */
 const asJson = (charge: TapCharge) => charge as unknown as Prisma.InputJsonValue;
+
+/**
+ * What Tap captured for an attempt: the stored charge object's amount when it
+ * holds a number (an AMOUNT_MISMATCH capture differs from the order total),
+ * otherwise the attempt's own amount.
+ */
+function capturedAmount(payment: { amount: Prisma.Decimal; rawLast: Prisma.JsonValue }): string {
+  const raw = payment.rawLast;
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const { amount, currency } = raw;
+    if (typeof amount === 'number' && Number.isFinite(amount)) return formatTapAmount(amount, typeof currency === 'string' ? currency : undefined);
+  }
+  return money(payment.amount);
+}
 
 /**
  * The fields a Tap charge must carry before its signature can even be checked
@@ -250,19 +264,29 @@ export class PaymentsService {
     return { outcome: settled.outcome, orderId: settled.orderId };
   }
 
-  /** Refunds the newest captured, unrefunded attempt of an order; 502 REFUND_FAILED. Used by OrdersService.cancel. */
+  /**
+   * Refunds the charge that paid the order (the newest captured, unrefunded
+   * attempt that is not a DUPLICATE_CAPTURE: staff refund those in Tap's
+   * dashboard) for what Tap captured; 502 REFUND_FAILED. Used by OrdersService.cancel.
+   */
   async refundForCancel(orderId: string, reason: string): Promise<{ refundId: string }> {
     const payment = await this.prisma.payment.findFirst({
-      where: { orderId, status: 'CAPTURED', refundId: null },
+      where: {
+        orderId,
+        status: 'CAPTURED',
+        refundId: null,
+        // not `NOT: { failureCode: 'DUPLICATE_CAPTURE' }`: in SQL that is unknown for the paying attempt's NULL code, which would hide it
+        OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }],
+      },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, chargeId: true, amount: true },
+      select: { id: true, chargeId: true, amount: true, currency: true, rawLast: true },
     });
     if (!payment?.chargeId) throw refundFailed('NOT_CAPTURED');
     if (!this.gateway) throw refundFailed('CHECKOUT_UNAVAILABLE');
 
     let refund: GatewayRefund;
     try {
-      refund = await this.gateway.refund({ chargeId: payment.chargeId, amount: money(payment.amount), currency: 'QAR', reason });
+      refund = await this.gateway.refund({ chargeId: payment.chargeId, amount: capturedAmount(payment), currency: payment.currency, reason });
     } catch (err) {
       if (err instanceof PaymentGatewayError) throw refundFailed(code64(err.code));
       throw err;

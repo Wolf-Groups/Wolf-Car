@@ -11,7 +11,7 @@ import { ensureSystemWebUser } from '../checkout/system-web-user';
 import type { CustomerPrincipal } from '../customers/customers.service';
 import { type PaymentGateway, PaymentGatewayError } from './payment-gateway';
 import { PaymentsService } from './payments.service';
-import { chargeOutcome, FAILED_STATUSES, sameAmount, type TapCharge } from './tap-charge';
+import { chargeOutcome, FAILED_STATUSES, formatTapAmount, sameAmount, type TapCharge } from './tap-charge';
 import { verifyTapSignature } from './tap-signature';
 
 // The pure helpers are stubs until Task 2 lands; the service's decision table is pinned against their contract.
@@ -123,6 +123,9 @@ describe('PaymentsService', () => {
       return s === 'CAPTURED' ? 'captured' : (FAILED_STATUSES as readonly string[]).includes(s) ? 'failed' : 'pending';
     });
     jest.mocked(sameAmount).mockImplementation((amount: number, total: string) => amount.toFixed(2) === total);
+    jest.mocked(formatTapAmount).mockImplementation((amount: number | string, currency = 'QAR') =>
+      Number(amount).toFixed(['KWD', 'BHD', 'OMR'].includes(currency.toUpperCase()) ? 3 : 2),
+    );
     jest.mocked(verifyTapSignature).mockReturnValue(true);
     for (const m of ['setEntity', 'setChange', 'setBranch', 'addMetadata', 'markFailure'] as const) trail[m].mockReturnValue(trail);
     prisma.$transaction.mockImplementation((arg: unknown) =>
@@ -556,6 +559,90 @@ describe('PaymentsService', () => {
       const args = prisma.payment.findFirst.mock.calls[0]?.[0];
       expect(args?.where).toMatchObject({ orderId: 'o-1', status: 'CAPTURED' });
       expect(JSON.stringify(args?.orderBy)).toContain('"createdAt":"desc"');
+    });
+
+    type Where = Record<string, unknown>;
+    /** The refund query's `where` as Postgres applies it: equality and `not` on NULL are unknown, and only true matches. */
+    const sqlMatch = (row: Record<string, unknown>, where: Where): boolean | null => {
+      let result: boolean | null = true;
+      const and = (v: boolean | null) => {
+        if (v === false) result = false;
+        else if (v === null && result !== false) result = null;
+      };
+      for (const [key, cond] of Object.entries(where)) {
+        if (key === 'OR') {
+          const vs = (cond as Where[]).map((w) => sqlMatch(row, w));
+          and(vs.includes(true) ? true : vs.includes(null) ? null : false);
+        } else if (key === 'AND' || key === 'NOT') {
+          for (const w of [cond].flat() as Where[]) {
+            const v = sqlMatch(row, w);
+            and(key === 'AND' || v === null ? v : !v);
+          }
+        } else if (cond === null) {
+          and(row[key] === null);
+        } else if (typeof cond === 'object' && 'not' in cond) {
+          const not = (cond as { not: unknown }).not;
+          and(not === null ? row[key] !== null : row[key] === null ? null : row[key] !== not);
+        } else {
+          and(row[key] === null ? null : row[key] === cond);
+        }
+      }
+      return result;
+    };
+    /** payment.findFirst over these rows: the where as Postgres applies it, newest first. */
+    const paymentsAre = (...rows: ReturnType<typeof paymentRow>[]) =>
+      prisma.payment.findFirst.mockImplementation(((args?: { where?: Where }) =>
+        Promise.resolve(
+          rows.filter((r) => sqlMatch(r, args?.where ?? {}) === true).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null,
+        )) as never);
+
+    it('refunds the charge that paid the order, never a newer DUPLICATE_CAPTURE one (staff refund that in Tap)', async () => {
+      const paying = paymentRow({ status: 'CAPTURED', failureCode: null });
+      const duplicate = paymentRow({ id: 'pay-2', chargeId: 'chg_2', status: 'CAPTURED', failureCode: 'DUPLICATE_CAPTURE', createdAt: new Date('2026-10-18T10:05:00.000Z') });
+      paymentsAre(paying, duplicate);
+      gateway.refund.mockResolvedValue({ id: 'rf_1', status: 'REFUNDED' });
+
+      await expect(service.refundForCancel('o-1', 'Cancelled by admin')).resolves.toEqual({ refundId: 'rf_1' });
+      expect(gateway.refund).toHaveBeenCalledTimes(1);
+      expect(gateway.refund).toHaveBeenCalledWith({ chargeId: 'chg_1', amount: '619.50', currency: 'QAR', reason: 'Cancelled by admin' });
+      expect(prisma.payment.update.mock.calls[0][0].where).toEqual({ id: 'pay-1' });
+    });
+
+    it('is 502 REFUND_FAILED, asking Tap nothing, when only a DUPLICATE_CAPTURE charge is left unrefunded', async () => {
+      paymentsAre(
+        paymentRow({ status: 'CAPTURED', failureCode: null, refundId: 'rf_0', refundedAt: new Date('2026-10-18T11:00:00.000Z') }),
+        paymentRow({ id: 'pay-2', chargeId: 'chg_2', status: 'CAPTURED', failureCode: 'DUPLICATE_CAPTURE', createdAt: new Date('2026-10-18T10:05:00.000Z') }),
+      );
+      await failsWith(service.refundForCancel('o-1', 'Cancelled by admin'), 502, 'REFUND_FAILED');
+      expect(gateway.refund).not.toHaveBeenCalled();
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+    });
+
+    it('refunds an AMOUNT_MISMATCH capture for what Tap captured, not the order total', async () => {
+      setOrder(webRow({ total: new Prisma.Decimal('120.50') }));
+      paymentsAre(
+        paymentRow({
+          status: 'CAPTURED',
+          failureCode: 'AMOUNT_MISMATCH',
+          amount: new Prisma.Decimal('120.50'),
+          rawLast: { id: 'chg_1', status: 'CAPTURED', amount: 100, currency: 'QAR' },
+        }),
+      );
+      gateway.refund.mockResolvedValue({ id: 'rf_1', status: 'REFUNDED' });
+      await service.refundForCancel('o-1', 'Cancelled by bo.cashier');
+      expect(gateway.refund).toHaveBeenCalledWith({ chargeId: 'chg_1', amount: '100.00', currency: 'QAR', reason: 'Cancelled by bo.cashier' });
+    });
+
+    it.each([
+      ['no charge object', null],
+      ['an amount that is not a number', { id: 'chg_1', status: 'CAPTURED', amount: '100', currency: 'QAR' }],
+      ['no amount', { id: 'chg_1', status: 'CAPTURED' }],
+      ['a JSON array', [100]],
+    ])('falls back to the attempt amount when the stored charge has %s', async (_what, rawLast) => {
+      paymentsAre(paymentRow({ status: 'CAPTURED', rawLast }));
+      gateway.refund.mockResolvedValue({ id: 'rf_1', status: 'REFUNDED' });
+      await service.refundForCancel('o-1', 'Cancelled by admin');
+      expect(gateway.refund).toHaveBeenCalledWith({ chargeId: 'chg_1', amount: '619.50', currency: 'QAR', reason: 'Cancelled by admin' });
     });
   });
 });
