@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "@/tests/msw";
@@ -6,6 +6,7 @@ import { renderOnSite } from "@/tests/render-site";
 import { router } from "@/tests/setup";
 import { apiError, ORDER_ID, removeCardSdk, stubCardSdk, webOrder } from "@/tests/shop-fixtures";
 import { PayStep } from "./pay-step";
+import { TOKENIZE_TIMEOUT_MS } from "./tap-card";
 
 const THREE_DS = "https://acceptance.sandbox.tap.company/gosell/v2/payment/3ds?chg=chg_TS05";
 const assign = vi.fn();
@@ -26,6 +27,7 @@ beforeEach(() => {
   vi.stubGlobal("location", { ...window.location, assign });
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   removeCardSdk();
 });
@@ -151,6 +153,65 @@ describe("checkout: pay step", () => {
     await user.click(pay);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Pay now" })).toBeEnabled());
+    expect(sent).toEqual([]);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("asks to check the card when Tap marks it invalid during Pay, and lets the customer press Pay again", async () => {
+    const { sdk, call } = stubCardSdk();
+    // Tap only marks the wrong field: neither onSuccess nor onError
+    vi.mocked(sdk.tokenize).mockImplementationOnce(() => undefined);
+    const sent = listenForPay(() => HttpResponse.json({ redirectUrl: THREE_DS, order: webOrder() }));
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    const pay = await screen.findByRole("button", { name: "Pay now" });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await user.click(pay);
+    expect(await screen.findByRole("button", { name: "Processing…" })).toBeDisabled();
+
+    call("onInvalidInput");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check the card details and try again.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Pay now" })).toBeEnabled());
+    expect(sent).toEqual([]);
+
+    // corrected card: Pay works again
+    call("onValidInput");
+    await user.click(screen.getByRole("button", { name: "Pay now" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(THREE_DS));
+    expect(sent).toEqual([{ tokenId: "tok_fake_ok", locale: "en" }]);
+  });
+
+  it("does not ask Tap for a token while the card form is invalid", async () => {
+    const { sdk, call } = stubCardSdk();
+    const sent = listenForPay(() => HttpResponse.json({ redirectUrl: THREE_DS, order: webOrder() }));
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="ar" onBack={vi.fn()} />, { locale: "ar" });
+    const pay = await screen.findByRole("button", { name: "ادفع الآن" });
+    await waitFor(() => expect(pay).toBeEnabled());
+
+    call("onInvalidInput");
+    await user.click(pay);
+    expect(await screen.findByRole("alert")).toHaveTextContent("راجع بيانات البطاقة وحاول مرة أخرى.");
+    expect(screen.getByRole("button", { name: "ادفع الآن" })).toBeEnabled();
+    expect(sdk.tokenize).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it("frees Pay after 30 s when Tap never answers, and pays nothing with Tap's late token", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { sdk, call } = stubCardSdk();
+    vi.mocked(sdk.tokenize).mockImplementationOnce(() => undefined);
+    const sent = listenForPay(() => HttpResponse.json({ redirectUrl: THREE_DS, order: webOrder() }));
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    const pay = await screen.findByRole("button", { name: "Pay now" });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await user.click(pay);
+    expect(await screen.findByRole("button", { name: "Processing…" })).toBeDisabled();
+
+    await act(() => vi.advanceTimersByTimeAsync(TOKENIZE_TIMEOUT_MS));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
+    expect(screen.getByRole("button", { name: "Pay now" })).toBeEnabled();
+
+    call("onSuccess", { id: "tok_late" });
+    await act(() => vi.advanceTimersByTimeAsync(100));
     expect(sent).toEqual([]);
     expect(assign).not.toHaveBeenCalled();
   });

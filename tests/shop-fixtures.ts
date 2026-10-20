@@ -83,7 +83,7 @@ export function recordShopCalls(calls: ShopCall[]) {
 export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0010", brand: "VISA" } }, fail }: { token?: TapToken; fail?: string } = {}) {
   const state: { config: Record<string, unknown> | null } = { config: null };
   const unmount = vi.fn();
-  const call = (name: "onReady" | "onSuccess" | "onError", arg?: unknown) => {
+  const call = (name: "onReady" | "onSuccess" | "onError" | "onValidInput" | "onInvalidInput", arg?: unknown) => {
     const fn = state.config?.[name];
     if (typeof fn === "function") (fn as (value?: unknown) => void)(arg);
   };

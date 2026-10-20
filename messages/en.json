@@ -247,6 +247,7 @@
       "OTP_INVALID": "Wrong code. Check the message and try again.",
       "OTP_TOO_MANY": "Too many attempts. Please wait a while and try again.",
       "PAYMENT_FAILED": "The payment was declined. Try another card.",
+      "TAP_CARD_INVALID": "Check the card details and try again.",
       "ORDER_NOT_PAYABLE": "This order can no longer be paid.",
       "CHECKOUT_UNAVAILABLE": "Online payment isn't available right now. Order on WhatsApp instead.",
       "ALREADY_PAID": "This order is already paid.",

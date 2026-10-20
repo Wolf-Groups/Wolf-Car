@@ -2,7 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeCardSdk, stubCardSdk } from "@/tests/shop-fixtures";
-import { TapCard, type TapCardHandle } from "./tap-card";
+import { TAP_CARD_INVALID, TAP_CARD_TIMEOUT, TapCard, type TapCardHandle, TOKENIZE_TIMEOUT_MS } from "./tap-card";
 import { TAP_SDK_URL, type TapToken } from "./tap-sdk";
 
 const sdkScripts = () => document.querySelectorAll<HTMLScriptElement>(`script[src="${TAP_SDK_URL}"]`);
@@ -99,6 +99,58 @@ describe("Tap card", () => {
     await waitFor(() => expect(sdk.renderTapCard).toHaveBeenCalled());
     view.unmount();
     expect(unmount).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Tap card: a tokenize Tap does not answer never hangs", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("rejects the tokenize in flight with TAP_CARD_INVALID when Tap reports the card fields invalid", async () => {
+    const { sdk, state, call } = stubCardSdk();
+    // Tap only marks the wrong field: neither onSuccess nor onError
+    vi.mocked(sdk.tokenize).mockImplementationOnce(() => undefined);
+    const { ref } = renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+
+    const tokenizing = ref.current!.tokenize();
+    call("onInvalidInput");
+    await expect(tokenizing).rejects.toThrow(TAP_CARD_INVALID);
+  });
+
+  it("rejects at once, without asking Tap, while Tap's last report was invalid; tokenizes again once valid", async () => {
+    const { sdk, state, call } = stubCardSdk();
+    const { ref } = renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+
+    call("onInvalidInput");
+    await expect(ref.current!.tokenize()).rejects.toThrow(TAP_CARD_INVALID);
+    expect(sdk.tokenize).not.toHaveBeenCalled();
+
+    call("onValidInput");
+    await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
+    expect(sdk.tokenize).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after TOKENIZE_TIMEOUT_MS (30 s) and ignores Tap's late answer", async () => {
+    expect(TOKENIZE_TIMEOUT_MS).toBe(30_000);
+    const { sdk, state, call } = stubCardSdk();
+    vi.mocked(sdk.tokenize).mockImplementationOnce(() => undefined);
+    const { ref } = renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    const tokenizing = ref.current!.tokenize();
+    const settled = vi.fn();
+    tokenizing.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(TOKENIZE_TIMEOUT_MS - 1);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(tokenizing).rejects.toThrow(TAP_CARD_TIMEOUT);
+
+    // the late token settles nothing: the next tokenize waits for an answer of its own
+    call("onSuccess", { id: "tok_late" });
+    await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
+    expect(sdk.tokenize).toHaveBeenCalledTimes(2);
   });
 });
 

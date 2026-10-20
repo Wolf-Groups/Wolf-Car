@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api/client";
 import type { WebOrder } from "@/lib/api/types";
 import { OrderLines } from "./order-lines";
 import { shop } from "./shop-api";
-import { TapCard, type TapCardHandle } from "./tap-card";
+import { TAP_CARD_INVALID, TapCard, type TapCardHandle } from "./tap-card";
 import { useCheckoutError } from "./use-checkout-error";
 
 export interface PayStepProps {
@@ -60,6 +60,8 @@ export function PayStep({ order, publicKey, locale, onBack }: PayStepProps) {
       paying.current = false;
       setBusy(false);
       if (e instanceof ApiError && e.code === "ORDER_NOT_PAYABLE") setExpired(true);
+      // Tap marks the wrong field itself; a timeout or any other card failure gets the shared rule (generic)
+      else if (e instanceof Error && e.message === TAP_CARD_INVALID) setError(t("errors.TAP_CARD_INVALID"));
       else setError(message(e));
     }
   };
