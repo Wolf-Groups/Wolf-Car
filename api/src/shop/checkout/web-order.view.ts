@@ -1,5 +1,6 @@
+import { money } from '../../common/money';
 import type { OrderStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from '../../generated/prisma/client';
-import { todo } from '../todo';
+import { imageUrl } from '../../uploads/image-processing';
 
 /** What the website is told about a customer's own order. No barcodes, no staff names. */
 export const WEB_ORDER_SELECT = {
@@ -44,5 +45,28 @@ export interface WebOrderView {
 }
 
 export function webOrderView(row: WebOrderRow): WebOrderView {
-  return todo('webOrderView', row);
+  const last = row.payments[0];
+  return {
+    id: row.id,
+    code: row.code,
+    status: row.status,
+    paymentStatus: row.paymentStatus,
+    total: money(row.total),
+    currency: row.currency,
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt?.toISOString() ?? null,
+    paidAt: row.paidAt?.toISOString() ?? null,
+    branch: { code: row.branch.code, name: row.branch.name, nameAr: row.branch.nameAr },
+    // a web order always carries the phone it was placed with
+    customer: { name: row.customerName, email: row.customerEmail, phone: row.customerPhone ?? '' },
+    items: row.items.map((i) => ({
+      productId: i.productId,
+      productName: i.productName,
+      unitPrice: money(i.unitPrice),
+      quantity: i.quantity,
+      lineTotal: money(i.lineTotal),
+      thumbUrl: imageUrl(i.product.imageKey, 'sm'),
+    })),
+    lastPayment: last ? { status: last.status, failureCode: last.failureCode } : null,
+  };
 }

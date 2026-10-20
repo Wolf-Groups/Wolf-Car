@@ -11,6 +11,8 @@ export interface ErrorBody {
   code?: string;
   errors?: unknown;
   retryAfterSeconds?: number;
+  /** PRODUCT_UNAVAILABLE: the basket lines the client should drop. */
+  productIds?: string[];
   requestId?: string;
 }
 
@@ -80,6 +82,7 @@ export function describeError(exception: unknown): ErrorBody {
       ...(typeof r.code === 'string' ? { code: r.code } : {}),
       ...(r.errors ? { errors: r.errors } : {}),
       ...(typeof r.retryAfterSeconds === 'number' ? { retryAfterSeconds: r.retryAfterSeconds } : {}),
+      ...(isStringArray(r.productIds) ? { productIds: r.productIds } : {}),
     };
   }
   if (isMulterError(exception)) {
@@ -106,6 +109,10 @@ export function describeError(exception: unknown): ErrorBody {
     };
   }
   return { statusCode: 500, error: 'Internal Server Error', message: 'Something went wrong.' };
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
 function isMulterError(e: unknown): e is { name: 'MulterError'; code: string } {

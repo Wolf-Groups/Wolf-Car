@@ -61,6 +61,13 @@ describe('AllExceptionsFilter', () => {
     expect(run({ name: 'MulterError', code: 'LIMIT_FILE_SIZE' }).status).toBe(413);
   });
 
+  it('passes the unavailable productIds through, and drops anything that is not a list of ids', () => {
+    const unavailable = (productIds: unknown) => new BadRequestException({ code: 'PRODUCT_UNAVAILABLE', message: 'Some products are no longer available.', productIds });
+    expect(run(unavailable(['p1', 'p2'])).body).toMatchObject({ statusCode: 400, code: 'PRODUCT_UNAVAILABLE', productIds: ['p1', 'p2'] });
+    expect(describeError(unavailable('p1'))).not.toHaveProperty('productIds');
+    expect(describeError(unavailable([{ id: 'p1' }]))).not.toHaveProperty('productIds');
+  });
+
   it('passes a string reason through (402 PAYMENT_FAILED, 502 REFUND_FAILED), and drops any other kind', () => {
     // read loosely: ErrorBody gains `reason?: string` in the plan's Task 6
     const reasonOf = (e: unknown) => (describeError(e) as unknown as Record<string, unknown>).reason;
