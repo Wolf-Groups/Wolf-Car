@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { useCart } from "@/features/catalog/cart";
-import { Link } from "@/i18n/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 import type { WebOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { localQatarNumber } from "@/shared/shop";
@@ -47,20 +47,27 @@ function resumable(order: WebOrder): boolean {
   );
 }
 
+/** Paid, or captured and held back (AMOUNT_MISMATCH, DUPLICATE_CAPTURE): nothing left to pay here. */
+function paidOrHeld(order: WebOrder): boolean {
+  return order.paymentStatus === "PAID" || (order.lastPayment?.status === "CAPTURED" && order.lastPayment.failureCode !== null);
+}
+
 /** The whole checkout: `useReducer(reduce, initialState)` over the four steps, or `empty` with a link to the catalogue. */
 export function Checkout({ publicKey }: CheckoutProps) {
   const t = useTranslations("Checkout");
   const locale = useLocale() === "ar" ? "ar" : "en";
   const lines = useCart();
   const session = useCustomer();
+  const router = useRouter();
   const [state, dispatch] = useReducer(reduce, initialState);
   const [devCode, setDevCode] = useState<string>();
   const [signingOut, setSigningOut] = useState(false);
 
-  // "Try another card" on the return page: /checkout?order=<id> picks the same order up at the pay step
+  // "Try another card" (or a lost session) on the return page: /checkout?order=<id> picks the same order up
   const orderParam = useSearchParams().get("order");
   const resumeId = orderParam !== null && ORDER_ID_PATTERN.test(orderParam) ? orderParam : null;
-  const [resumeSettled, setResumeSettled] = useState(false);
+  /** the customer (phone) the resume was settled for: signing in again on this page tries again */
+  const [resumedFor, setResumedFor] = useState<string | null>(null);
 
   // the remembered session decides the first step, in the same render it arrives (no flash of the phone step)
   const [seen, setSeen] = useState<CustomerSession["status"]>("loading");
@@ -70,23 +77,31 @@ export function Checkout({ publicKey }: CheckoutProps) {
     else if (session.status === "anonymous") dispatch({ type: "NO_SESSION" });
   }
 
+  // signed in, by a remembered session or a code on this page (VERIFIED)
+  const signedIn = state.step === "details" || state.step === "pay" ? state.customer : null;
+  const resumeFor = resumeId !== null && signedIn ? signedIn.phone : null;
+  const resuming = resumeFor !== null && resumedFor !== resumeFor;
+
   useEffect(() => {
-    if (session.status !== "signed-in" || resumeId === null) return;
+    if (!resuming || resumeId === null) return;
     let live = true;
-    shop
-      .getOrder(resumeId)
-      .then((order) => {
-        if (live && resumable(order)) dispatch({ type: "ORDER_CREATED", order });
-      })
+    shop.getOrder(resumeId).then(
+      (order) => {
+        if (!live) return;
+        // paid, or money taken and held for the branch: its return page says so, and no new checkout starts
+        if (paidOrHeld(order)) return router.replace(`/checkout/return?order=${order.id}`);
+        if (resumable(order)) dispatch({ type: "ORDER_CREATED", order });
+        setResumedFor(resumeFor);
+      },
       // gone, or not this customer's: the details step starts a new order
-      .catch(() => undefined)
-      .finally(() => {
-        if (live) setResumeSettled(true);
-      });
+      () => {
+        if (live) setResumedFor(resumeFor);
+      },
+    );
     return () => {
       live = false;
     };
-  }, [session.status, resumeId]);
+  }, [resuming, resumeId, resumeFor, router]);
 
   const signOut = async () => {
     setSigningOut(true);
@@ -94,6 +109,7 @@ export function Checkout({ publicKey }: CheckoutProps) {
     // a customer who signed in on this page never had a remembered session to lose: reset the steps here
     dispatch({ type: "NO_SESSION" });
     setDevCode(undefined);
+    setResumedFor(null);
     setSigningOut(false);
   };
 
@@ -106,7 +122,7 @@ export function Checkout({ publicKey }: CheckoutProps) {
     shownStep.current = state.step;
   });
 
-  const booting = session.status === "loading" || (session.status === "signed-in" && resumeId !== null && !resumeSettled);
+  const booting = session.status === "loading" || resuming;
   if (booting) {
     return <div aria-busy="true" className="h-56 animate-pulse rounded-[var(--radius-brand-lg)] border border-line bg-surface" />;
   }
@@ -124,7 +140,6 @@ export function Checkout({ publicKey }: CheckoutProps) {
   }
 
   const current = STEPS.indexOf(state.step);
-  const customer = state.step === "details" || state.step === "pay" ? state.customer : null;
 
   return (
     <div className="grid gap-5">
@@ -137,9 +152,9 @@ export function Checkout({ publicKey }: CheckoutProps) {
         ))}
       </ol>
 
-      {customer && (
+      {signedIn && (
         <div className="flex flex-wrap items-center justify-between gap-x-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface px-4 py-1.5 text-[15px] text-ink-2">
-          <span>{t("signedInAs", { phone: `⁦${displayPhone(customer.phone)}⁩` })}</span>
+          <span>{t("signedInAs", { phone: `\u2066${displayPhone(signedIn.phone)}\u2069` })}</span>
           <button
             type="button"
             onClick={signOut}

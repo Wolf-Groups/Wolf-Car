@@ -16,8 +16,8 @@ import { QtyStepper } from "./catalog-grid";
 
 /**
  * Floating basket button plus the drawer it opens. "Pay by card" goes to the
- * online checkout; "Order on WhatsApp", the second way, sends the list to the
- * Bin Omran branch, which handles online orders.
+ * online checkout (priced lines only); "Order on WhatsApp", the second way,
+ * sends the whole list to the Bin Omran branch, which handles online orders.
  */
 export function CartSheet() {
   const t = useTranslations("Cart");

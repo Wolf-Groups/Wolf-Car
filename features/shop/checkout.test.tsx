@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cart } from "@/features/catalog/cart";
 import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
+import { router } from "@/tests/setup";
 import { apiError, CART_PRODUCTS, customer, ORDER_ID, paidOrder, removeCardSdk, setCustomerHint, stubCardSdk, webOrder } from "@/tests/shop-fixtures";
 import { Checkout } from "./checkout";
 
@@ -178,11 +179,27 @@ describe("checkout page", () => {
     expect(created).not.toHaveBeenCalled();
   });
 
+  it("starts at the details when the order to resume has expired", async () => {
+    fillCart();
+    setCustomerHint(true);
+    visitWithOrder(ORDER_ID);
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer())),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => HttpResponse.json(webOrder({ status: "CANCELLED" }))),
+    );
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+
+    expect(await screen.findByLabelText("Full name")).toHaveValue("Sara Ali");
+    expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  // controller ruling (b): nothing is left to pay, so no new checkout starts for it
   it.each([
-    ["expired", webOrder({ status: "CANCELLED" })],
-    ["already paid", paidOrder()],
-    ["held for the branch", webOrder({ lastPayment: { status: "CAPTURED", failureCode: "AMOUNT_MISMATCH" } })],
-  ])("starts at the details when the order to resume is %s", async (_, order) => {
+    ["paid", paidOrder()],
+    ["held as AMOUNT_MISMATCH", webOrder({ lastPayment: { status: "CAPTURED", failureCode: "AMOUNT_MISMATCH" } })],
+    ["held as DUPLICATE_CAPTURE", webOrder({ status: "CANCELLED", paymentStatus: "REFUNDED", lastPayment: { status: "CAPTURED", failureCode: "DUPLICATE_CAPTURE" } })],
+  ])("sends an order to resume that is %s to its return page", async (_, order) => {
     fillCart();
     setCustomerHint(true);
     visitWithOrder(ORDER_ID);
@@ -192,8 +209,32 @@ describe("checkout page", () => {
     );
     renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
 
-    expect(await screen.findByLabelText("Full name")).toHaveValue("Sara Ali");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/checkout/return?order=${ORDER_ID}`));
+    expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+  });
+
+  // controller ruling (a): the return page sends a customer whose session is gone to /checkout?order=<id>
+  it("picks the order up again once the customer signs in with the code", async () => {
+    fillCart();
+    stubCardSdk();
+    visitWithOrder(ORDER_ID);
+    const created = vi.fn();
+    server.use(
+      http.post("/api/shop/otp", () => HttpResponse.json({ expiresAt: "2031-03-10T09:05:00.000Z" })),
+      http.post("/api/shop/otp/verify", () => HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" })),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => HttpResponse.json(webOrder({ lastPayment: { status: "FAILED", failureCode: "DECLINED" } }))),
+      http.post("/api/shop/orders", () => (created(), apiError(500, "server"))),
+    );
+    const { user } = renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+
+    await user.type(await screen.findByLabelText("Mobile number"), "55123456");
+    await user.click(screen.getByRole("button", { name: "Send code" }));
+    await user.type(await screen.findByLabelText("Verification code"), "482915");
+
+    expect(await screen.findByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it("asks for no order to resume without a session, and starts at the phone number", async () => {

@@ -21,7 +21,7 @@ export interface ReturnStatusProps {
 }
 
 /** What the server's order says once the payment is decided. */
-type Outcome = "paid" | "notPaid" | "expired" | "review";
+type Outcome = "paid" | "notPaid" | "expired" | "review" | "refunded";
 /** `waiting`: still undecided after CHECKOUT_POLL_MAX_MS; `error`: the order could not be read */
 type View = "checking" | Outcome | "waiting" | "error";
 
@@ -30,8 +30,12 @@ const MAX_POLLS = Math.floor(CHECKOUT_POLL_MAX_MS / CHECKOUT_POLL_MS);
 /** The order's outcome, or null while the payment is still being decided (keep polling). */
 function outcomeOf(order: WebOrder): Outcome | null {
   if (order.paymentStatus === "PAID") return "paid";
-  // Tap took the money but the order was held back (AMOUNT_MISMATCH, DUPLICATE_CAPTURE): the branch sorts it out
-  if (order.paymentStatus === "PENDING" && order.lastPayment?.status === "CAPTURED") return "review";
+  const captured = order.lastPayment?.status === "CAPTURED";
+  // Tap took the money but it was held back (AMOUNT_MISMATCH, or DUPLICATE_CAPTURE after a refund): the branch sorts it out
+  if (captured && order.lastPayment?.failureCode) return "review";
+  if (order.paymentStatus === "REFUNDED") return "refunded";
+  // a clean capture always comes with PAID; seen without it, the money was still taken
+  if (captured) return "review";
   // closed without a payment: the expiry sweep cancels it and leaves paymentStatus PENDING and the stale attempt
   if (order.status !== "PENDING" || order.paymentStatus !== "PENDING") return "expired";
   if (order.lastPayment === null || order.lastPayment.status === "INITIATED") return null;
@@ -39,11 +43,11 @@ function outcomeOf(order: WebOrder): Outcome | null {
 }
 
 /**
- * True the first time this tab sees the order paid: a reload of this page, or Back to it after
- * starting a new basket, must neither empty that basket nor count the sale twice.
+ * True the first time this tab does `what` for the order: a reload of this page, or Back to it
+ * after starting a new basket, must neither empty that basket nor count the sale twice.
  */
-function firstSightOfPaid(orderId: string): boolean {
-  const key = `wolfcar.paid.${orderId}`;
+function firstTimeInTab(what: "basket" | "paid", orderId: string): boolean {
+  const key = `wolfcar.${what}.${orderId}`;
   try {
     if (window.sessionStorage.getItem(key)) return false;
     window.sessionStorage.setItem(key, "1");
@@ -59,7 +63,7 @@ const displayPhone = (e164: string) => {
   return `+974 ${local.slice(0, 4)} ${local.slice(4)}`;
 };
 
-/** After Tap's redirect: reconcile once, poll while pending, then paid / not paid / expired / in review. */
+/** After Tap's redirect: reconcile once, poll while pending, then paid / not paid / expired / in review / refunded. */
 export function ReturnStatus({ orderId }: ReturnStatusProps) {
   const t = useTranslations("Checkout");
   const locale = useLocale() === "ar" ? "ar" : "en";
@@ -68,7 +72,8 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
   const [order, setOrder] = useState<WebOrder | null>(null);
   /** bumped by "Check again": reconcile and poll once more */
   const [round, setRound] = useState(0);
-  const celebrated = useRef(false);
+  const basketCleared = useRef(false);
+  const saleReported = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -85,20 +90,22 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       seen = true;
       const outcome = outcomeOf(o);
       if (outcome === null) return next();
-      if (outcome === "paid" && !celebrated.current) {
-        celebrated.current = true;
-        if (firstSightOfPaid(o.id)) {
-          cart.clear();
-          track("order_paid");
-        }
+      // the money was taken either way: the basket is bought, but only a paid order counts as a sale
+      if ((outcome === "paid" || outcome === "review") && !basketCleared.current) {
+        basketCleared.current = true;
+        if (firstTimeInTab("basket", o.id)) cart.clear();
+      }
+      if (outcome === "paid" && !saleReported.current) {
+        saleReported.current = true;
+        if (firstTimeInTab("paid", o.id)) track("order_paid");
       }
       setOrder(o);
       setView(outcome);
     };
     const fail = (e: unknown) => {
       if (!live) return;
-      // the session cookie is gone: sign in again at the checkout
-      if (e instanceof ApiError && e.status === 401) return router.push("/checkout");
+      // the session cookie is gone: sign in again at the checkout, which then picks this order up again
+      if (e instanceof ApiError && e.status === 401) return router.push(`/checkout?order=${orderId}`);
       // not this customer's order, or no order at all: asking again will not change that
       if (e instanceof ApiError && (e.status === 400 || e.status === 403 || e.status === 404)) return setView("error");
       // Tap or the API is slow or down for a moment: the webhook may still settle the order
@@ -181,6 +188,11 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
     case "expired":
       icon = <CircleAlert className="size-7 shrink-0 text-danger" aria-hidden="true" />;
       headline = t("expired");
+      body = <Actions>{backToProducts("default")}</Actions>;
+      break;
+    case "refunded":
+      icon = <CircleAlert className="size-7 shrink-0 text-muted" aria-hidden="true" />;
+      headline = t("refunded");
       body = <Actions>{backToProducts("default")}</Actions>;
       break;
     case "waiting":

@@ -45,5 +45,32 @@ describe("cart drawer", () => {
   it("says Pay by card in Arabic on the Arabic site", async () => {
     const { sheet } = await openCart("ar");
     expect(within(sheet).getByRole("link", { name: "الدفع بالبطاقة" })).toHaveAttribute("href", "/checkout");
+    expect(within(sheet).getByText("ادفع بالبطاقة الآن واستلم من فرع بن عمران، أو أرسل القائمة عبر واتساب ليؤكد الفريق التوفر والتوافق أولًا.")).toBeInTheDocument();
+  });
+
+  // with card payment the customer pays first: nobody confirms stock or fit before a card payment
+  it("says how each way works: pay by card now, or WhatsApp with the branch confirming first", async () => {
+    const { sheet } = await openCart();
+    expect(
+      within(sheet).getByText("Pay by card now and collect at our Bin Omran branch, or send this list on WhatsApp and the team confirms stock and fit first."),
+    ).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/before you pay/);
+  });
+
+  it("says unpriced items can only be ordered on WhatsApp, not in a card payment", async () => {
+    act(() => cart.add({ id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" }));
+    const { sheet } = await openCart();
+    expect(
+      within(sheet).getByText("1 item has no price yet. Items without a price can only be ordered on WhatsApp; a card payment leaves them out."),
+    ).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/will confirm it/);
+  });
+
+  it("says the same about unpriced items in Arabic", async () => {
+    act(() => cart.add({ id: "p-wrap", name: "PPF Full Wrap", price: null, thumbUrl: "/api/uploads/wrap-sm.webp" }));
+    const { sheet } = await openCart("ar");
+    expect(
+      within(sheet).getByText("منتج واحد بلا سعر بعد. المنتجات غير المسعّرة تُطلب عبر واتساب فقط، ولا يشملها الدفع بالبطاقة."),
+    ).toBeInTheDocument();
   });
 });

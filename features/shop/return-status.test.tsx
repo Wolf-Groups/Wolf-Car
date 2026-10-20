@@ -156,6 +156,8 @@ describe("checkout return page", () => {
       expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
       expect(screen.queryByText("The payment didn't go through.")).not.toBeInTheDocument();
       expect(tracked()).not.toContain("order_paid");
+      // controller ruling (c): the money was taken, so the basket is bought, but it is not counted as a sale
+      await waitFor(() => expect(storedCart()).toEqual([]));
 
       const polls = calls.poll;
       expect(polls).toBeGreaterThan(0);
@@ -163,6 +165,32 @@ describe("checkout return page", () => {
       expect(calls.poll).toBe(polls);
     },
   );
+
+  // controller ruling (d): a capture with a failure code on any order that is not paid is held for the branch
+  it.each([
+    ["a refunded order", webOrder({ status: "CANCELLED", paymentStatus: "REFUNDED", lastPayment: { status: "CAPTURED", failureCode: "DUPLICATE_CAPTURE" } })],
+    ["an expired order", webOrder({ status: "CANCELLED", paymentStatus: "PENDING", lastPayment: { status: "CAPTURED", failureCode: "AMOUNT_MISMATCH" } })],
+  ])("says a held capture on %s reached the branch", async (_, order) => {
+    listen({ reconcile: () => json(order) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+    expect(await screen.findByText("We received your payment. The branch will contact you to finish your order.")).toBeInTheDocument();
+    expect(screen.queryByText(/expired|refunded/)).not.toBeInTheDocument();
+  });
+
+  // controller ruling (d): not "expired… try again"
+  it("says a refunded order was cancelled and refunded, and keeps the basket", async () => {
+    const refunded = paidOrder({ status: "CANCELLED", paymentStatus: "REFUNDED", lastPayment: { status: "CAPTURED", failureCode: null } });
+    const calls = listen({ reconcile: () => json(refunded) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+
+    expect(await screen.findByText("This order was cancelled and your payment was refunded.")).toBeInTheDocument();
+    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
+    await tick(CHECKOUT_POLL_MS * 2);
+    expect(calls.poll).toBe(0);
+    expect(storedCart()).toHaveLength(1);
+    expect(tracked()).not.toContain("order_paid");
+  });
 
   it("stops polling after CHECKOUT_POLL_MAX_MS", async () => {
     const calls = listen({ reconcile: () => json(pending()), poll: () => json(pending()) });
@@ -209,10 +237,17 @@ describe("checkout return page", () => {
     expect(tracked().filter((t) => t === "order_paid")).toHaveLength(1);
   });
 
-  it("sends a customer whose session is gone back to the checkout", async () => {
+  // controller ruling (a): with the order, so the checkout picks it up again after the code
+  it("sends a customer whose session is gone back to the checkout, with the order", async () => {
     listen({ reconcile: () => apiError(401, "SESSION_EXPIRED") });
     renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/checkout"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/checkout?order=${ORDER_ID}`));
+  });
+
+  it("says a refunded order was refunded in Arabic", async () => {
+    listen({ reconcile: () => json(paidOrder({ status: "CANCELLED", paymentStatus: "REFUNDED" })) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} />, { locale: "ar" });
+    expect(await screen.findByText("تم إلغاء هذا الطلب واسترداد المبلغ الذي دفعته.")).toBeInTheDocument();
   });
 
   it("is written in Arabic on the Arabic site", async () => {
