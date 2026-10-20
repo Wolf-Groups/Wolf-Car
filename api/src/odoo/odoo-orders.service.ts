@@ -28,6 +28,13 @@ const LAST_ERROR_MAX = 600;
 /** A sale order still to be confirmed (Odoo refuses action_confirm in any other state). */
 const UNCONFIRMED = new Set(['draft', 'sent']);
 
+/** A sale.order as search_read answers it (partner_id is [id, name]). */
+interface FoundSaleOrder {
+  id: number;
+  state: string;
+  partner_id: [number, string] | false;
+}
+
 /** What a row needs to be sent: its progress so far and the order in OutboxOrder shape. */
 const OUTBOX_ROW_SELECT = {
   id: true,
@@ -194,13 +201,16 @@ export class OdooOrdersService implements OnModuleInit, OnModuleDestroy {
   /**
    * Partner (found by phone, else created), sale order, confirmation. The sale
    * order's id is stored as soon as Odoo answers it, so a later try only
-   * confirms that order instead of creating a second one.
+   * confirms that order instead of creating a second one. A later try that
+   * has no id yet first looks the order up by client_order_ref: Odoo may have
+   * created it without the answer reaching us (a timeout, a 502 while Odoo
+   * finished the work).
    */
   private async send(
     odoo: OdooWriter,
     row: OutboxRow,
     write: (data: Prisma.OdooOutboxUpdateInput) => Promise<unknown>,
-  ): Promise<{ partnerId: number; saleOrderId: number }> {
+  ): Promise<{ partnerId: number | null; saleOrderId: number }> {
     if (row.odooSaleOrderId !== null && row.odooPartnerId !== null) {
       const [sale] = await odoo.searchRead<{ state: string }>('sale.order', [['id', '=', row.odooSaleOrderId]], ['state']);
       if (!sale) throw new Error(`Sale order ${row.odooSaleOrderId} is no longer in Odoo`);
@@ -209,6 +219,18 @@ export class OdooOrdersService implements OnModuleInit, OnModuleDestroy {
     }
 
     const order = outboxOrder(row.order);
+    if (row.attempts > 0) {
+      const sales = await odoo.searchRead<FoundSaleOrder>('sale.order', [['client_order_ref', '=', order.code]], ['id', 'state', 'partner_id']);
+      // several (a hand-made one, or earlier lost answers): the newest is the one to finish
+      const sale = sales.reduce<FoundSaleOrder | undefined>((newest, s) => (!newest || s.id > newest.id ? s : newest), undefined);
+      if (sale) {
+        const partnerId = Array.isArray(sale.partner_id) ? sale.partner_id[0] : null;
+        await write({ odooPartnerId: partnerId, odooSaleOrderId: sale.id });
+        if (UNCONFIRMED.has(sale.state)) await odoo.call('sale.order', 'action_confirm', [sale.id]);
+        return { partnerId, saleOrderId: sale.id };
+      }
+    }
+
     // an empty phone would match every partner without one
     if (!order.customerPhone) throw new Error('The order has no phone number');
     const [found] = await odoo.searchRead<{ id: number }>('res.partner', partnerDomain(order.customerPhone), ['id']);

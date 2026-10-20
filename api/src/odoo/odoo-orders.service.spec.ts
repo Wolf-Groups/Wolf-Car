@@ -280,6 +280,59 @@ describe('OdooOrdersService', () => {
       expect(lastWrite()).toMatchObject({ status: 'DONE', odooSaleOrderId: 42 });
     });
 
+    describe('a sale order Odoo created without the answer reaching us (timeout, 502)', () => {
+      const models = () => writer.searchRead.mock.calls.map((c) => c[0]);
+      const later = (attempts: number) => {
+        prisma.odooOutbox.findUnique.mockResolvedValue({ ...outboxRow({ attempts, lastError: 'Odoo answered HTTP 504' }), order: orderRow() } as never);
+      };
+
+      it('the first try does not look for one: it creates the sale order once', async () => {
+        await service.processOne('ob-1');
+        expect(models()).toEqual(['res.partner']);
+        expect(writer.create.mock.calls.filter((c) => c[0] === 'sale.order')).toHaveLength(1);
+      });
+
+      it('a later try finds the newest one by client_order_ref and confirms it instead of creating another', async () => {
+        later(1);
+        writer.searchRead.mockImplementation(async (model: string) =>
+          (model === 'sale.order'
+            ? [
+                { id: 40, state: 'cancel', partner_id: [5, 'Sara Al Thani'] },
+                { id: 42, state: 'draft', partner_id: [7, 'Sara Al Thani'] },
+              ]
+            : []) as never,
+        );
+        await service.processOne('ob-1');
+        expect(writer.searchRead.mock.calls[0].slice(0, 3)).toEqual(['sale.order', [['client_order_ref', '=', 'BO-000001']], ['id', 'state', 'partner_id']]);
+        expect(models()).toEqual(['sale.order']);
+        expect(writer.create).not.toHaveBeenCalled();
+        expect(writer.call.mock.calls.map((c) => c.slice(0, 3))).toEqual([['sale.order', 'action_confirm', [42]]]);
+        expect(outboxWrites().map((w) => w.data)).toEqual([
+          { odooPartnerId: 7, odooSaleOrderId: 42 },
+          expect.objectContaining({ status: 'DONE', odooPartnerId: 7, odooSaleOrderId: 42, lastError: null }),
+        ]);
+      });
+
+      it('a later try that finds one already confirmed only records it', async () => {
+        later(3);
+        writer.searchRead.mockImplementation(async (model: string) => (model === 'sale.order' ? [{ id: 42, state: 'sale', partner_id: [7, 'Sara Al Thani'] }] : []) as never);
+        await service.processOne('ob-1');
+        expect(writer.create).not.toHaveBeenCalled();
+        expect(writer.call).not.toHaveBeenCalled();
+        expect(lastWrite()).toMatchObject({ status: 'DONE', odooPartnerId: 7, odooSaleOrderId: 42 });
+      });
+
+      it('a later try that finds none creates the sale order as before', async () => {
+        later(2);
+        await service.processOne('ob-1');
+        expect(writer.searchRead.mock.calls[0].slice(0, 3)).toEqual(['sale.order', [['client_order_ref', '=', 'BO-000001']], ['id', 'state', 'partner_id']]);
+        expect(models()).toEqual(['sale.order', 'res.partner']);
+        expect(writer.create.mock.calls.map((c) => c[0])).toEqual(['res.partner', 'sale.order']);
+        expect(writer.call.mock.calls[0].slice(0, 3)).toEqual(['sale.order', 'action_confirm', [42]]);
+        expect(lastWrite()).toMatchObject({ status: 'DONE', odooPartnerId: 7, odooSaleOrderId: 42 });
+      });
+    });
+
     it('leaves a row that is no longer PENDING alone', async () => {
       prisma.odooOutbox.findUnique.mockResolvedValue({ ...outboxRow({ status: 'DONE' }), order: orderRow() } as never);
       await service.processOne('ob-1');
