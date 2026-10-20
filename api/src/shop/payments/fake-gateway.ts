@@ -1,5 +1,11 @@
-import { todo } from '../todo';
-import type { CreateChargeInput, GatewayRefund, PaymentGateway, RefundInput } from './payment-gateway';
+import { FAKE_TOKENS } from '../../../../shared/shop';
+import {
+  type CreateChargeInput,
+  type GatewayRefund,
+  type PaymentGateway,
+  PaymentGatewayError,
+  type RefundInput,
+} from './payment-gateway';
 import type { TapCharge } from './tap-charge';
 
 /**
@@ -16,19 +22,53 @@ export class FakePaymentGateway implements PaymentGateway {
   private counter = 0;
 
   createCharge(input: CreateChargeInput): Promise<TapCharge> {
-    return todo('FakePaymentGateway.createCharge', this.charges, this.counter, input);
+    if (!(Object.values(FAKE_TOKENS) as string[]).includes(input.tokenId)) {
+      return Promise.reject(new PaymentGatewayError('Unknown test token', 'INVALID_TOKEN', 400));
+    }
+    this.counter += 1;
+    const charge: TapCharge = {
+      id: `chg_fake_${this.counter}`,
+      status: 'INITIATED',
+      amount: Number(input.amount),
+      currency: input.currency,
+      reference: { order: input.orderCode, idempotent: input.paymentId, gateway: '', payment: '' },
+      transaction: { created: String(Date.now()), url: input.redirectUrl },
+      metadata: { orderId: input.orderId, paymentId: input.paymentId },
+    };
+    this.charges.set(charge.id, { charge, tokenId: input.tokenId });
+    return Promise.resolve({ ...charge });
   }
 
   getCharge(chargeId: string): Promise<TapCharge> {
-    return todo('FakePaymentGateway.getCharge', chargeId);
+    const entry = this.charges.get(chargeId);
+    if (!entry) return Promise.reject(new PaymentGatewayError('No such charge', 'NOT_FOUND', 404));
+    const { charge, tokenId } = entry;
+    if (charge.status === 'INITIATED') {
+      if (tokenId === FAKE_TOKENS.ok) {
+        charge.status = 'CAPTURED';
+        charge.reference = { ...charge.reference, payment: 'fakepay1' };
+      } else if (tokenId === FAKE_TOKENS.declined) {
+        charge.status = 'DECLINED';
+      }
+    }
+    return Promise.resolve({ ...charge });
   }
 
   refund(input: RefundInput): Promise<GatewayRefund> {
-    return todo('FakePaymentGateway.refund', input);
+    const entry = this.charges.get(input.chargeId);
+    if (!entry || entry.charge.status !== 'CAPTURED') {
+      return Promise.reject(new PaymentGatewayError('Not captured', 'NOT_CAPTURED', 400));
+    }
+    entry.charge.status = 'REFUNDED';
+    this.counter += 1;
+    return Promise.resolve({ id: `rf_fake_${this.counter}`, status: 'REFUNDED' });
   }
 
   /** Tests: force a status ("CAPTURED", "DECLINED", …) and get the charge back. */
   settle(chargeId: string, status: string): TapCharge {
-    return todo('FakePaymentGateway.settle', chargeId, status);
+    const entry = this.charges.get(chargeId);
+    if (!entry) throw new PaymentGatewayError('No such charge', 'NOT_FOUND', 404);
+    entry.charge.status = status;
+    return { ...entry.charge };
   }
 }
