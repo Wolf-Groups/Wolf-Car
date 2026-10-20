@@ -315,7 +315,7 @@ api/test/                          API end-to-end tests · e2e/ = Playwright tes
 4. An order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order.
 5. The paid order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code. There is no e-mail receipt; the cashier prints the usual PDF receipt.
 
-Routes (all under `/api/shop`; the customer cookie and the `X-Requested-With: wolfcar` header apply except on the webhook and the code request):
+Routes (all under `/api/shop`; non-GET calls carry the `X-Requested-With: wolfcar` header, and the customer cookie is needed except for the code request, sign-in and the webhook):
 
 | Route | What |
 |---|---|
