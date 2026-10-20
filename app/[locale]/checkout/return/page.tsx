@@ -6,9 +6,8 @@ import { Wrap } from "@/components/Button";
 import { Footer } from "@/components/Footer";
 import { SubpageHeader } from "@/components/SubpageHeader";
 import { ReturnStatus } from "@/features/shop/return-status";
+import { ORDER_ID_PATTERN } from "@/features/shop/shop-api";
 import { routing } from "@/i18n/routing";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -20,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
 /**
  * Where Tap sends the customer back after 3-D Secure (?order=<uuid>). The
  * redirect proves nothing: the page asks the API to reconcile with Tap and
- * shows what the server says.
+ * shows what the server says. Never framed nor indexed (next.config.ts headers).
  */
 export default async function CheckoutReturnPage({
   params,
@@ -33,7 +32,7 @@ export default async function CheckoutReturnPage({
   const { order } = await searchParams;
   const locale = hasLocale(routing.locales, raw) ? raw : routing.defaultLocale;
   setRequestLocale(locale);
-  if (typeof order !== "string" || !UUID.test(order)) notFound();
+  if (typeof order !== "string" || !ORDER_ID_PATTERN.test(order)) notFound();
   return (
     <>
       <SubpageHeader />

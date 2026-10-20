@@ -8,14 +8,16 @@ import { Direction } from "radix-ui";
 import { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Link } from "@/i18n/navigation";
 import { getBranches, waLink } from "@/lib/branches";
 import { formatMoney } from "@/lib/format";
 import { cart, cartTotals, orderMessage, useCart } from "./cart";
 import { QtyStepper } from "./catalog-grid";
 
 /**
- * Floating basket button plus the drawer it opens. "Order on WhatsApp" sends
- * the list to the Bin Omran branch, which handles online orders.
+ * Floating basket button plus the drawer it opens. "Pay by card" goes to the
+ * online checkout; "Order on WhatsApp", the second way, sends the list to the
+ * Bin Omran branch, which handles online orders.
  */
 export function CartSheet() {
   const t = useTranslations("Cart");
@@ -96,14 +98,23 @@ export function CartSheet() {
                   <b className="text-xl font-extrabold tabular-nums">{formatMoney(total, locale)}</b>
                 </div>
                 {unpriced > 0 && <p className="text-xs text-muted">{t("unpricedNote", { count: unpriced })}</p>}
+                {/* checkout_start is counted once, by the details step, not by this link */}
+                <Link
+                  href="/checkout"
+                  className="inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-accent px-5 text-[17px] font-bold text-white hover:bg-accent-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink"
+                >
+                  <Icon name="card" className="size-5" />
+                  {t("payByCard")}
+                </Link>
+                <p className="text-center text-[13px] text-muted">{t("orWhatsapp")}</p>
                 <a
                   href={waLink(locale, "binomran", orderMessage(items, locale))}
                   target="_blank"
                   rel="noopener"
                   data-track="whatsapp_order"
-                  className="inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-wa px-5 text-[17px] font-bold text-white hover:brightness-95"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[var(--radius-brand)] border-[1.5px] border-wa/50 px-5 text-[15px] font-bold text-ink hover:border-wa hover:bg-wa/5"
                 >
-                  <Icon name="wa" className="size-5" />
+                  <Icon name="wa" className="size-5 text-wa" />
                   {t("checkout", { branch: branch.short })}
                 </a>
                 <button type="button" onClick={() => cart.clear()} className="min-h-11 text-sm font-semibold text-muted hover:text-ink">

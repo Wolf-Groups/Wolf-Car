@@ -240,6 +240,8 @@
     "showAtBranch": "Show this code at the branch when you collect your parts.",
     "backToCatalog": "Back to products",
     "checking": "Checking your payment…",
+    "stillPending": "We're still waiting for the bank to confirm your payment. Check again in a minute.",
+    "checkAgain": "Check again",
     "signedInAs": "Signed in as {phone}",
     "signOut": "Sign out",
     "empty": "Your cart is empty. Add some parts first.",

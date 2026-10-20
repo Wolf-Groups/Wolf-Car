@@ -41,6 +41,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   act(() => cart.clear());
+  // the page remembers per tab which orders it already reported paid
+  sessionStorage.clear();
 });
 
 describe("checkout return page", () => {
@@ -104,7 +106,8 @@ describe("checkout return page", () => {
     renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
 
     expect(await screen.findByText("The payment didn't go through.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Try another card" })).toHaveAttribute("href", "/checkout");
+    // controller ruling C5 (spec: back to the pay step): the same order, never a second one
+    expect(screen.getByRole("link", { name: "Try another card" })).toHaveAttribute("href", `/checkout?order=${ORDER_ID}`);
     expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
     expect(screen.queryByText("BO-000001")).not.toBeInTheDocument();
 
@@ -172,6 +175,38 @@ describe("checkout return page", () => {
     expect(polls).toBeLessThanOrEqual(CHECKOUT_POLL_MAX_MS / CHECKOUT_POLL_MS);
     await tick(CHECKOUT_POLL_MS * 3);
     expect(calls.poll).toBe(polls);
+  });
+
+  it("says it is still waiting once polling gives up, and checks again on request", async () => {
+    const calls = listen({ reconcile: (n) => json(n < 2 ? pending() : paidOrder()), poll: () => json(pending()) });
+    const { user } = renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+    await waitFor(() => expect(calls.reconcile).toBe(1));
+
+    for (let elapsed = 0; elapsed <= CHECKOUT_POLL_MAX_MS; elapsed += CHECKOUT_POLL_MS) await tick(CHECKOUT_POLL_MS);
+    expect(await screen.findByText("We're still waiting for the bank to confirm your payment. Check again in a minute.")).toBeInTheDocument();
+    // no answer is not a refusal: nothing invites a second payment
+    expect(screen.queryByRole("link", { name: "Try another card" })).not.toBeInTheDocument();
+    expect(storedCart()).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    expect(calls.reconcile).toBe(2);
+    await waitFor(() => expect(storedCart()).toEqual([]));
+  });
+
+  it("does not empty a new basket nor count the sale again when the paid page is shown again in the tab", async () => {
+    listen({ reconcile: () => json(paidOrder()) });
+    const first = renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+    expect(await screen.findByText("BO-000001")).toBeInTheDocument();
+    await waitFor(() => expect(storedCart()).toEqual([]));
+    first.unmount();
+
+    // a new basket, then Back (or a reload) to the same return page
+    act(() => cart.add(CART_PRODUCTS[1]));
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
+    expect(await screen.findByText("BO-000001")).toBeInTheDocument();
+    expect(storedCart()).toHaveLength(1);
+    expect(tracked().filter((t) => t === "order_paid")).toHaveLength(1);
   });
 
   it("sends a customer whose session is gone back to the checkout", async () => {

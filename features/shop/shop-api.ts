@@ -18,6 +18,9 @@ export function hasCustomerHint(): boolean {
   return typeof document !== "undefined" && document.cookie.split("; ").some((c) => c.startsWith("wc_customer="));
 }
 
+/** An order id as the API issues it (a UUID): the only `?order=` the return page and "Try another card" accept. */
+export const ORDER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const CSRF = { "X-Requested-With": "wolfcar" };
 
 export async function shopApi<T>(path: string, options: ShopRequestOptions = {}): Promise<T> {
