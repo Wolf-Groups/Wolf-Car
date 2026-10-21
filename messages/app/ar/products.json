@@ -55,6 +55,11 @@
     "notSet": "لم يُحدَّد بعد"
   },
   "listLabel": "المنتجات",
+  "categoryFilterLabel": "السيارة أو الفئة",
+  "allCategories": "كل السيارات والفئات",
+  "stockFilterLabel": "المخزون",
+  "stockIn": "متوفر",
+  "stockOut": "نفد",
   "priceFilterLabel": "السعر",
   "orderLabel": "ترتيب القائمة",
   "savingOrder": "جارٍ حفظ الترتيب الجديد…",
