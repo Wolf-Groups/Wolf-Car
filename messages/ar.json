@@ -172,6 +172,7 @@
     "priceOnRequest": "السعر عند الطلب",
     "addToCart": "أضف إلى السلة",
     "addShort": "أضف",
+    "unavailable": "غير متوفر",
     "chooseCar": "اختر سيارتك",
     "qtyFor": "كمية {name}",
     "variant": "اللون",

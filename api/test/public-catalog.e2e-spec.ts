@@ -18,6 +18,7 @@ describe('Public catalogue (e2e)', () => {
     expect(res.body.map((p: { name: string }) => p.name)).toEqual(['Dash Cam', 'Floor Mats', 'Phone Holder']);
     for (const product of res.body) {
       expect(Object.keys(product).sort()).toEqual([
+        'available',
         'categoryId',
         'description',
         'groupId',

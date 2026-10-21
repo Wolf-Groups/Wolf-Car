@@ -31,12 +31,15 @@ describe('PublicCatalogService', () => {
       'id',
       'imageKey',
       'name',
+      // read to say whether it can be bought; the count itself is never sent
+      'odooStock',
       'odooTemplateId',
       'price',
       'variantColor',
       'variantLabel',
     ]);
     expect(Object.keys(items[0]).sort()).toEqual([
+      'available',
       'categoryId',
       'description',
       'groupId',

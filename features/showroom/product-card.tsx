@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import type { ShowroomProduct } from "@/lib/api/types";
 import { formatMoney } from "@/lib/format";
 import { fast, spring } from "@/lib/motion";
+import { isAvailable } from "@/lib/stock";
 import { cn } from "@/lib/utils";
 import type { ProductGroup } from "@/lib/variants";
 import { ImageZoom } from "@/components/image-zoom";
@@ -70,6 +71,7 @@ export function ProductCard({
   }, [flash]);
 
   const added = flash > 0;
+  const available = isAvailable(product);
 
   return (
     <article
@@ -92,7 +94,7 @@ export function ProductCard({
           open={zoomed}
           onOpenChange={setZoomed}
         >
-          <ProductImage product={product} sizes={PRODUCT_IMAGE_SIZES} className="absolute inset-0 p-3" />
+          <ProductImage product={product} sizes={PRODUCT_IMAGE_SIZES} className={cn("absolute inset-0 p-3", !available && "opacity-50")} />
         </ImageZoom>
         {/* over the photo, so a product with colours is as tall as its neighbours */}
         {picker && <div className="absolute inset-x-2 bottom-2 flex justify-center">{picker}</div>}
@@ -129,25 +131,31 @@ export function ProductCard({
           <p className="text-[22px] leading-tight font-extrabold tabular-nums">
             <span dir="ltr">{formatMoney(product.price, locale)}</span>
           </p>
-          <Button
-            size="touch"
-            className="mt-3 w-full"
-            aria-label={t("addNamed", { name: product.name })}
-            onClick={() => {
-              if (onAdd()) setFlash((n) => n + 1);
-            }}
-          >
-            <motion.span
-              key={added ? "added" : "add"}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={fast}
-              className="inline-flex items-center gap-2"
+          {!available ? (
+            <p className="mt-3 flex min-h-[60px] w-full items-center justify-center rounded-[var(--radius-brand)] bg-sand px-4 text-[17px] font-bold text-muted">
+              {t("unavailable")}
+            </p>
+          ) : (
+            <Button
+              size="touch"
+              className="mt-3 w-full"
+              aria-label={t("addNamed", { name: product.name })}
+              onClick={() => {
+                if (onAdd()) setFlash((n) => n + 1);
+              }}
             >
-              {added ? <Check aria-hidden="true" strokeWidth={2.4} /> : <Plus aria-hidden="true" strokeWidth={2.2} />}
-              {added ? t("added") : t("add")}
-            </motion.span>
-          </Button>
+              <motion.span
+                key={added ? "added" : "add"}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={fast}
+                className="inline-flex items-center gap-2"
+              >
+                {added ? <Check aria-hidden="true" strokeWidth={2.4} /> : <Plus aria-hidden="true" strokeWidth={2.2} />}
+                {added ? t("added") : t("add")}
+              </motion.span>
+            </Button>
+          )}
         </div>
       </div>
     </article>

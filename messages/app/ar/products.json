@@ -69,6 +69,10 @@
     "keyExpiring": "مفتاح الربط مع أودو ينتهي {days, plural, one {غدًا} two {خلال يومين} few {خلال # أيام} other {خلال # يومًا}} ({date}). أنشئ مفتاحًا جديدًا في أودو قبل هذا التاريخ وإلا ستتوقف المزامنة.",
     "fromOdoo": "من أودو"
   },
+  "stock": {
+    "available": "متوفر: {n, number}",
+    "out": "نفد"
+  },
   "historyNamed": "سجل أسعار {name}",
   "dnd": {
     "roleDescription": "قابل لإعادة الترتيب",

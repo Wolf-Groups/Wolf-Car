@@ -172,6 +172,7 @@
     "priceOnRequest": "Price on request",
     "addToCart": "Add to cart",
     "addShort": "Add",
+    "unavailable": "Not available",
     "chooseCar": "Choose your car",
     "qtyFor": "Quantity of {name}",
     "variant": "Colour",

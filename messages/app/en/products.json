@@ -69,6 +69,10 @@
     "keyExpiring": "The Odoo API key expires {days, plural, one {tomorrow} other {in # days}} ({date}). Create a new key in Odoo before then, or syncing will stop.",
     "fromOdoo": "From Odoo"
   },
+  "stock": {
+    "available": "In stock: {n, number}",
+    "out": "Out of stock"
+  },
   "historyNamed": "Price history of {name}",
   "dnd": {
     "roleDescription": "sortable",

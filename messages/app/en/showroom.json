@@ -2,6 +2,7 @@
   "title": "Showroom",
   "branchLabel": "{branch}",
   "add": "Add",
+  "unavailable": "Not available",
   "addNamed": "Add {name}",
   "variant": "Colour",
   "viewImage": "View {name} larger",

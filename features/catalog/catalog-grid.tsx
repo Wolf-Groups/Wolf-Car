@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { PublicProduct } from "@/lib/api/types";
 import { formatMoney } from "@/lib/format";
+import { availableFirst, isAvailable } from "@/lib/stock";
 import { cn } from "@/lib/utils";
 import { groupVariants, type ProductGroup } from "@/lib/variants";
 import { ImageZoom } from "@/components/image-zoom";
@@ -36,7 +37,8 @@ export function CatalogGrid({ products }: { products: PublicProduct[] }) {
     const matched = q
       ? products.filter((p) => `${p.name} ${p.description ?? ""}`.toLocaleLowerCase().includes(q))
       : products;
-    return sort === "name" ? matched : [...matched].sort(byPrice(sort === "priceAsc" ? 1 : -1));
+    // whatever the sort, what cannot be bought comes last
+    return availableFirst(sort === "name" ? matched : [...matched].sort(byPrice(sort === "priceAsc" ? 1 : -1)));
   }, [products, deferred, sort]);
   // the colours of one product share a card
   const groups = useMemo(() => groupVariants(visible), [visible]);
@@ -129,6 +131,7 @@ function ProductCard({ group }: { group: ProductGroup<PublicProduct> }) {
   const p = group.variants.find((v) => v.id === picked) ?? group.variants[0];
   const qty = useCart().find((l) => l.id === p.id)?.qty ?? 0;
   const [zoomed, setZoomed] = useState(false);
+  const available = isAvailable(p);
 
   return (
     <li className="group flex flex-col overflow-hidden rounded-[var(--radius-brand-lg)] border border-line bg-surface transition-colors hover:border-[#cfcbc4] dark:hover:border-[#4a463f]">
@@ -150,7 +153,7 @@ function ProductCard({ group }: { group: ProductGroup<PublicProduct> }) {
             alt={group.title}
             fill
             sizes="(min-width:1280px) 220px, (min-width:768px) 30vw, 48vw"
-            className="object-contain p-2 transition-transform duration-300 group-hover:scale-[1.04] sm:p-5"
+            className={cn("object-contain p-2 transition-transform duration-300 group-hover:scale-[1.04] sm:p-5", !available && "opacity-50")}
             unoptimized
           />
         </ImageZoom>
@@ -172,7 +175,12 @@ function ProductCard({ group }: { group: ProductGroup<PublicProduct> }) {
           {p.price == null ? <span className="text-[15px] text-muted">{t("priceOnRequest")}</span> : formatMoney(p.price, locale)}
         </p>
         <div className="mt-auto">
-          {qty === 0 ? (
+          {!available ? (
+            // in place of the button, so nothing out of stock can go in the basket
+            <p className="inline-flex min-h-[44px] w-full items-center justify-center rounded-[var(--radius-brand)] bg-sand px-3 text-[15px] font-bold whitespace-nowrap text-muted">
+              {t("unavailable")}
+            </p>
+          ) : qty === 0 ? (
             <button
               type="button"
               onClick={() => cart.add(p)}

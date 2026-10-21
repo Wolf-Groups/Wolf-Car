@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { inStock } from '../products/stock';
 import { countCards, VARIANT_SELECT, variantView } from '../products/variant.view';
 import { imageUrl } from '../uploads/image-processing';
 
@@ -21,6 +22,8 @@ export interface PublicProduct {
   groupId: string | null;
   variantLabel: string | null;
   variantColor: string | null;
+  /** false when Odoo has none left: shown as "not available" and refused at checkout */
+  available: boolean;
 }
 
 /** A car-model grouping as shown publicly, with how many products it holds. */
@@ -53,7 +56,7 @@ export class PublicCatalogService {
         ...(quickService ? { isQuickService: true } : {}),
         ...(categoryId ? { categoryId: { in: parentId ? [categoryId, parentId] : [categoryId] }, category: { isActive: true } } : {}),
       },
-      select: { id: true, name: true, description: true, categoryId: true, price: true, imageKey: true, ...VARIANT_SELECT },
+      select: { id: true, name: true, description: true, categoryId: true, price: true, imageKey: true, odooStock: true, ...VARIANT_SELECT },
       orderBy: { name: 'asc' },
       take: 5000,
     });
@@ -66,6 +69,8 @@ export class PublicCatalogService {
       imageUrl: imageUrl(p.imageKey),
       thumbUrl: imageUrl(p.imageKey, 'sm'),
       ...variantView(p),
+      // only whether it can be bought, never how many: the count stays with staff
+      available: inStock(p.odooStock),
     }));
   }
 
