@@ -43,5 +43,23 @@ export function apiEnv(): Record<string, string> {
     AUTH_THROTTLE_LIMIT: "1000",
     RATE_LIMIT_PER_MINUTE: "100000",
     UPLOAD_DIR: "./storage/e2e-uploads",
+    // online checkout: the in-memory Tap stand-in, codes logged instead of texted,
+    // and echoed in the answer (the API runs as production here, which would hide them)
+    PAYMENTS_PROVIDER: "fake",
+    SMS_PROVIDER: "console",
+    OTP_DEV_CODE_IN_RESPONSE: "true",
+    // the API refuses both of the above in production unless told this is the test run
+    ALLOW_TEST_CHECKOUT: "true",
+    WEB_PUBLIC_URL: WEB_URL,
+    API_PUBLIC_URL: API_URL,
+    TAP_SECRET_KEY: "fake-secret",
+    // the Odoo outbox timer runs here (production mode): it must never write to a real Odoo
+    ODOO_WRITE_LOGIN: "",
+    ODOO_WRITE_API_KEY: "",
+    // nor read from one: the catalogue sync timer would replace the seeded catalogue mid-run
+    ODOO_URL: "",
+    ODOO_DB: "",
+    ODOO_LOGIN: "",
+    ODOO_API_KEY: "",
   };
 }

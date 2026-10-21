@@ -4,8 +4,9 @@ import { formatMoney } from "@/lib/format";
 import { track } from "@/lib/track";
 
 /**
- * The website basket. There is no checkout: the customer sends the list to the
- * Bin Omran branch on WhatsApp, which confirms stock and fitment.
+ * The website basket. The customer pays for it by card at /checkout (priced
+ * lines only, collected at the Bin Omran branch), or sends the list to that
+ * branch on WhatsApp, which confirms stock and fitment.
  *
  * Kept in localStorage so it survives switching car models and reloads; every
  * access is guarded because storage can be missing or blocked (private mode).

@@ -27,6 +27,8 @@ describe('ShowroomService', () => {
       createdAt: new Date(), updatedAt: new Date(), confirmedAt: null, cancelledAt: null,
       branch: { id: 'gh', code: 'GH', name: 'GH', nameAr: 'GH' }, createdBy: { id: 'u-1', username: 'x', displayName: 'x' },
       confirmedBy: null, cancelledBy: null, _count: { items: 2 }, items: [],
+      // what ORDER_DETAIL_SELECT reads for a showroom order since the web-order fields
+      source: 'SHOWROOM', paymentStatus: 'NONE', paidAt: null, collectedAt: null, customerPhone: null, customerEmail: null, collectedBy: null, payments: [],
     } as never);
   });
 

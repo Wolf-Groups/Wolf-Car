@@ -6,14 +6,14 @@ import { getBranchList } from "@/lib/branches";
 import { SOCIAL } from "@/lib/content";
 import { LEGAL_UPDATED, type LegalDoc } from "@/lib/legal";
 
-/** Shared layout for the privacy policy and terms pages. */
+/** Shared layout for the privacy policy, terms and refund policy pages. */
 export async function LegalPage({ doc }: { doc: LegalDoc }) {
   const locale = await getLocale();
   const t = await getTranslations("Legal");
   const updated = new Intl.DateTimeFormat(locale === "ar" ? "ar-QA" : "en-GB", {
     dateStyle: "long",
     timeZone: "Asia/Qatar",
-  }).format(new Date(LEGAL_UPDATED));
+  }).format(new Date(doc.updated ?? LEGAL_UPDATED));
 
   return (
     <>

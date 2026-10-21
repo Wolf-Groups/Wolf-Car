@@ -16,6 +16,8 @@ export class ApiError extends Error {
     readonly errors: FieldError[] = [],
     readonly retryAfterSeconds?: number,
     readonly requestId?: string,
+    /** PRODUCT_UNAVAILABLE: the basket lines the API refused */
+    readonly productIds?: string[],
   ) {
     super(message);
     this.name = "ApiError";
@@ -60,6 +62,7 @@ export async function toApiError(res: Response): Promise<ApiError> {
     Array.isArray(body.errors) ? (body.errors as FieldError[]) : [],
     typeof body.retryAfterSeconds === "number" ? body.retryAfterSeconds : undefined,
     typeof body.requestId === "string" ? body.requestId : undefined,
+    Array.isArray(body.productIds) && body.productIds.every((x) => typeof x === "string") ? (body.productIds as string[]) : undefined,
   );
 }
 

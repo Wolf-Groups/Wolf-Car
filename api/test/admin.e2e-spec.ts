@@ -307,7 +307,7 @@ describe('Administration: users, branches, permissions (e2e)', () => {
       expect(res.status).toBe(200);
       expect((await as(fin).get('/api/auth/me')).body.permissions).not.toContain('order.read.all');
       const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'permission.role.update' } });
-      expect(log.before).toEqual({ permissions: ['order.read.all', 'product.read', 'product.update.price'] });
+      expect(log.before).toEqual({ permissions: ['order.odoo.retry', 'order.read.all', 'product.read', 'product.update.price'] });
       expect(log.entityId).toBe('FINANCE');
     });
 

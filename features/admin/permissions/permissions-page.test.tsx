@@ -92,7 +92,7 @@ describe("Permissions — by role", () => {
     await user.click(within(screen.getByRole("region", { name: "Unsaved changes" })).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(lastPut()).not.toBeNull());
     expect(lastPut()?.role).toBe("FINANCE");
-    expect(lastPut()?.body).toEqual({ permissions: ["product.update.price", "product.read", "order.read.all", "activity.read"] });
+    expect(lastPut()?.body).toEqual({ permissions: ["product.update.price", "product.read", "order.read.all", "order.odoo.retry", "activity.read"] });
     await waitFor(() => expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument());
     expect(screen.getByRole("checkbox", { name: "View the activity log — Finance" })).toBeChecked();
   });

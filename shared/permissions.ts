@@ -26,6 +26,7 @@ export const PERMISSIONS = {
   'order.cancel': { group: 'order', description: 'Cancel pending orders' },
   'order.confirm': { group: 'order', description: 'Confirm pending orders (makes them immutable)' },
   'order.receipt.download': { group: 'order', description: 'Download order receipts as PDF' },
+  'order.odoo.retry': { group: 'order', description: 'Send a paid web order to Odoo again after it failed' },
   'booking.ppf.read': { group: 'booking', description: 'View the PPF calendar, bookings and light-job requests' },
   'booking.ppf.manage': {
     group: 'booking',
@@ -55,7 +56,7 @@ export function isPermissionKey(value: string): value is PermissionKey {
  * and cannot be edited, so nobody can lock the system out of administration.
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<Exclude<RoleName, 'SUPER_ADMIN'>, PermissionKey[]> = {
-  FINANCE: ['product.read', 'product.update.price', 'order.read.all'],
+  FINANCE: ['product.read', 'product.update.price', 'order.read.all', 'order.odoo.retry'],
   BRANCH_MANAGER: [
     'product.create',
     'product.update.details',

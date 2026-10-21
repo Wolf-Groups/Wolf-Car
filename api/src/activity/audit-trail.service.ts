@@ -18,6 +18,8 @@ export interface AuditState {
   before?: unknown;
   after?: unknown;
   metadata?: Record<string, unknown>;
+  /** Set by markFailure: the request answered normally but the entry is a FAILURE. */
+  outcome?: 'FAILURE';
 }
 
 const KEY = 'audit';
@@ -77,6 +79,17 @@ export class AuditTrail {
   addMetadata(data: Record<string, unknown>): this {
     const s = this.state();
     s.metadata = { ...s.metadata, ...data };
+    return this;
+  }
+
+  /**
+   * Records the entry as a FAILURE (metadata.reason = reason) although the
+   * handler returns normally, e.g. a webhook we must answer 200.
+   */
+  markFailure(reason: string): this {
+    const s = this.state();
+    s.outcome = 'FAILURE';
+    s.metadata = { ...s.metadata, reason };
     return this;
   }
 }

@@ -15,6 +15,14 @@ const APP_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+/**
+ * The online checkout and its return page: never framed (a payment form must not be
+ * clickjacked; Tap's own card frames inside the page are unaffected) nor indexed. The
+ * referrer keeps the browser default rather than APP_HEADERS' same-origin, so Tap's
+ * card form, served from Tap's domain, still sees which site embeds it.
+ */
+const CHECKOUT_HEADERS = APP_HEADERS.map((h) => (h.key === "Referrer-Policy" ? { ...h, value: "strict-origin-when-cross-origin" } : h));
+
 /** This machine's LAN IPv4 addresses, so phones and laptops on the same Wi-Fi can use the dev server. */
 const LAN_HOSTS = Object.values(networkInterfaces())
   .flat()
@@ -48,6 +56,8 @@ const nextConfig: NextConfig = {
       { source: "/:locale(ar|en)/showroom/:path*", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/showroom", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/slots", headers: APP_HEADERS },
+      { source: "/:locale(ar|en)/checkout", headers: CHECKOUT_HEADERS },
+      { source: "/:locale(ar|en)/checkout/:path*", headers: CHECKOUT_HEADERS },
     ];
   },
 };

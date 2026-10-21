@@ -24,6 +24,30 @@ describe('AuditTrail', () => {
     });
   });
 
+  it('marks the entry as a failure with a reason, keeping the other metadata', async () => {
+    await cls.run(async () => {
+      const chained = trail.addMetadata({ via: 'webhook' }).markFailure('AMOUNT_MISMATCH');
+      expect(chained).toBe(trail);
+      trail.addMetadata({ chargeId: 'chg_1' });
+      expect(trail.snapshot()).toMatchObject({
+        outcome: 'FAILURE',
+        metadata: { via: 'webhook', reason: 'AMOUNT_MISMATCH', chargeId: 'chg_1' },
+      });
+    });
+  });
+
+  it('leaves the outcome unset until markFailure is called', async () => {
+    await cls.run(async () => {
+      trail.setEntity('Order', 'o-1').addMetadata({ a: 1 });
+      expect(trail.snapshot().outcome).toBeUndefined();
+    });
+  });
+
+  it('markFailure is a no-op outside a request', () => {
+    expect(() => trail.markFailure('X')).not.toThrow();
+    expect(trail.snapshot()).toEqual({});
+  });
+
   it('keeps requests isolated and is a no-op outside a request', async () => {
     await Promise.all([
       cls.run(async () => {

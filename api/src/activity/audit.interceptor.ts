@@ -36,26 +36,24 @@ export class AuditInterceptor implements NestInterceptor {
     const options: AuditOptions = meta ?? { action: `http.${req.method.toLowerCase()}`, entity: undefined };
 
     return next.handle().pipe(
-      concatMap((body: unknown) => from(this.write(req, options, 'SUCCESS', body).then(() => body))),
-      catchError((err: unknown) => from(this.write(req, options, 'FAILURE', undefined, err)).pipe(concatMap(() => throwError(() => err)))),
+      concatMap((body: unknown) => from(this.write(req, options, { body }).then(() => body))),
+      catchError((err: unknown) => from(this.write(req, options, { err })).pipe(concatMap(() => throwError(() => err)))),
     );
   }
 
-  private async write(
-    req: AppRequest,
-    options: AuditOptions,
-    outcome: 'SUCCESS' | 'FAILURE',
-    body?: unknown,
-    err?: unknown,
-  ): Promise<void> {
+  /** `err` present: the handler threw. Otherwise it answered `body`, and the entry is a SUCCESS unless the handler called trail.markFailure. */
+  private async write(req: AppRequest, options: AuditOptions, result: { body: unknown } | { err: unknown }): Promise<void> {
     const state = this.trail.snapshot();
+    const thrown = 'err' in result;
+    const body = thrown ? undefined : result.body;
+    const outcome = thrown ? 'FAILURE' : (state.outcome ?? 'SUCCESS');
     const actor = state.actor ?? (req.user
       ? { id: req.user.id, username: req.user.username, role: req.user.role, branchId: req.user.branchId }
       : undefined);
     const rawParam = options.idParam ? req.params?.[options.idParam] : undefined;
     const paramId = typeof rawParam === 'string' ? rawParam : undefined;
     const bodyId =
-      outcome === 'SUCCESS' && body && typeof body === 'object' && 'id' in body && typeof (body as { id: unknown }).id === 'string'
+      body && typeof body === 'object' && 'id' in body && typeof (body as { id: unknown }).id === 'string'
         ? (body as { id: string }).id
         : undefined;
 
@@ -63,9 +61,9 @@ export class AuditInterceptor implements NestInterceptor {
     if (!options.entity && !state.entityType && options.action.startsWith('http.')) {
       metadata.path = req.route?.path ?? req.path;
     }
-    if (outcome === 'FAILURE') {
+    if (thrown) {
       // the same mapping as the exception filter: log what the client received
-      const error = describeError(err);
+      const error = describeError(result.err);
       metadata.status = error.statusCode;
       if (error.code) metadata.reason = error.code;
       else if (error.statusCode < 500) metadata.reason = error.message.slice(0, 200);

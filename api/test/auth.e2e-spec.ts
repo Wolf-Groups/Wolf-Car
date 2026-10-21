@@ -99,7 +99,7 @@ describe('Auth (e2e)', () => {
       const { token } = await login(t, 'finance', PW.finance);
       const me = await t.http().get('/api/auth/me').set(bearer(token));
       expect(me.status).toBe(200);
-      expect(me.body.permissions).toEqual(['order.read.all', 'product.read', 'product.update.price']);
+      expect(me.body.permissions).toEqual(['order.odoo.retry', 'order.read.all', 'product.read', 'product.update.price']);
     });
 
     it('refresh requires the CSRF header and rotates the cookie', async () => {

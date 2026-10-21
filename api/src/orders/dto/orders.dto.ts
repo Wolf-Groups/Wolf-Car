@@ -18,6 +18,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ORDER_STATUSES, type OrderStatusName } from '../../../../shared/permissions';
+import { ORDER_SOURCES, type OrderSourceName } from '../../../../shared/shop';
 import {
   CUSTOMER_NAME_MAX,
   CUSTOMER_NAME_MIN,
@@ -87,6 +88,11 @@ export class ListOrdersQueryDto extends PageQueryDto {
   @IsOptional()
   @IsIn(ORDER_STATUSES)
   status?: OrderStatusName;
+
+  /** SHOWROOM (kiosk) or WEB (the website's online checkout). */
+  @IsOptional()
+  @IsIn(ORDER_SOURCES)
+  source?: OrderSourceName;
 
   /** Inclusive start (YYYY-MM-DD in Qatar time, or a full ISO timestamp). */
   @IsOptional()
