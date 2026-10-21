@@ -1,5 +1,5 @@
 import { toApiError } from "@/lib/api/client";
-import type { CustomerProfile, WebOrder } from "@/lib/api/types";
+import type { CustomerCar, CustomerProfile, WebOrder } from "@/lib/api/types";
 
 /**
  * The website's checkout has no staff token: the API reads the httpOnly
@@ -8,7 +8,7 @@ import type { CustomerProfile, WebOrder } from "@/lib/api/types";
  * the CSRF header, and throw `ApiError` (via `toApiError`) on any non-2xx.
  */
 export interface ShopRequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   json?: unknown;
   headers?: Record<string, string>;
 }
@@ -52,6 +52,14 @@ export const shop = {
   },
   me(): Promise<CustomerProfile> {
     return shopApi("/me");
+  },
+  /** The car models the customer drives, in their order. */
+  myCars(): Promise<CustomerCar[]> {
+    return shopApi("/me/cars");
+  },
+  /** Replaces the list (at most 5); answers the saved list. */
+  saveCars(categoryIds: string[]): Promise<CustomerCar[]> {
+    return shopApi("/me/cars", { method: "PUT", json: { categoryIds } });
   },
   logout(): Promise<void> {
     return shopApi("/logout", { method: "POST" });

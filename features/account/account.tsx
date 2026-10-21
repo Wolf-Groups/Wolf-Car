@@ -11,6 +11,7 @@ import type { WebOrder } from "@/lib/api/types";
 import { formatDate, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { localQatarNumber } from "@/shared/shop";
+import { MyCars } from "./my-cars";
 import { orderState } from "./order-state";
 import { SignIn } from "./sign-in";
 import { StateBadge } from "./state-badge";
@@ -48,6 +49,7 @@ export function Account() {
           {t("signOut")}
         </Button>
       </div>
+      <MyCars />
       <OrdersList />
     </div>
   );

@@ -419,6 +419,18 @@
       "refunded": "This order was cancelled and your payment was refunded.",
       "review": "We received your payment. The branch will contact you to finish your order.",
       "cancelled": "This order was cancelled before it was paid."
-    }
+    },
+    "carsTitle": "My cars",
+    "carsIntro": "Pick the cars you drive and we'll show their parts first.",
+    "carsEmpty": "You haven't added a car yet.",
+    "addCars": "Add your car",
+    "editCars": "Change",
+    "carsPick": "Choose up to {max} cars",
+    "save": "Save",
+    "cancel": "Cancel",
+    "carsError": "We couldn't save your cars. Please try again.",
+    "carsLoadError": "We couldn't load the car list. Please try again.",
+    "yourCars": "Your cars",
+    "pickYourCar": "Add your car to see its parts first"
   }
 }
