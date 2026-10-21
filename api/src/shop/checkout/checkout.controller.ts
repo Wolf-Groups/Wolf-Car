@@ -39,6 +39,12 @@ export class CheckoutController {
     return { ...order, replayed };
   }
 
+  /** Newest first, at most 50; abandoned checkouts are left out. */
+  @Get()
+  list(@CurrentCustomer() customer: CustomerPrincipal): Promise<WebOrderView[]> {
+    return this.checkout.list(customer);
+  }
+
   @Get(':id')
   get(@CurrentCustomer() customer: CustomerPrincipal, @Param('id', ParseUUIDPipe) id: string): Promise<WebOrderView> {
     return this.checkout.get(customer, id);

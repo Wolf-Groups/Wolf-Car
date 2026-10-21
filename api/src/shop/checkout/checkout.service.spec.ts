@@ -30,6 +30,7 @@ const webRow = (over: Partial<WebOrderRow> = {}): WebOrderRow => ({
   createdAt: new Date('2026-10-18T10:00:00.000Z'),
   expiresAt: new Date('2026-10-18T10:30:00.000Z'),
   paidAt: null,
+  collectedAt: null,
   customerName: 'Sara Al Thani',
   customerEmail: 'sara@example.qa',
   customerPhone: '+97455123456',
@@ -231,6 +232,26 @@ describe('CheckoutService', () => {
     it("is 404 for anyone else's order", async () => {
       orderLookups(null);
       await expect(service.get(customer, 'o-2')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('list', () => {
+    it("returns the customer's own orders, newest first, at most 50", async () => {
+      prisma.order.findMany.mockResolvedValue([webRow({ id: 'o-2', code: 'BO-000002' }), webRow()] as never);
+      const views = await service.list(customer);
+      expect(views.map((v) => v.id)).toEqual(['o-2', 'o-1']);
+      const args = prisma.order.findMany.mock.calls[0][0];
+      expect(args?.where).toMatchObject({ customerId: 'c-1', source: 'WEB' });
+      expect(args?.orderBy).toEqual({ createdAt: 'desc' });
+      expect(args?.take).toBe(50);
+    });
+
+    it('leaves out checkouts that were cancelled before any card was charged', async () => {
+      prisma.order.findMany.mockResolvedValue([] as never);
+      await service.list(customer);
+      expect(prisma.order.findMany.mock.calls[0][0]?.where).toMatchObject({
+        NOT: { status: 'CANCELLED', paymentStatus: 'PENDING', payments: { none: { status: 'CAPTURED' } } },
+      });
     });
   });
 

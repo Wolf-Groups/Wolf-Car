@@ -36,6 +36,7 @@ const webRow = (over: Partial<WebOrderRow> = {}): WebOrderRow => ({
   createdAt: new Date('2026-10-18T10:00:00.000Z'),
   expiresAt: new Date(Date.now() + 20 * 60_000),
   paidAt: null,
+  collectedAt: null,
   customerName: 'Sara Al Thani',
   customerEmail: 'sara@example.qa',
   customerPhone: '+97455123456',
