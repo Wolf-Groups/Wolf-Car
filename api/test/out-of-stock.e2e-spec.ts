@@ -1,5 +1,5 @@
 import { createTestApp, type TestApp } from './utils/app';
-import { bearer, showroomLogin } from './utils/auth';
+import { bearer, login, showroomLogin } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
 import { createWebOrder, CUSTOMER_PHONE, defaultBasket, SHOP_ENV, signInCustomer } from './utils/shop';
 
@@ -55,5 +55,32 @@ describe('Out-of-stock products (e2e)', () => {
     expect(refused.body.code).toBe('PRODUCT_UNAVAILABLE');
     // one in stock still sells
     expect((await order(world.products[1].id)).status).toBe(201);
+  });
+
+  describe('the dashboard list', () => {
+    const list = async (query: string) => {
+      const admin = (await login(t, 'admin', PW.admin)).token;
+      const res = await t.http().get(`/api/products?${query}`).set(bearer(admin));
+      expect(res.status).toBe(200);
+      return (res.body as { id: string }[]).map((p) => p.id).sort();
+    };
+
+    it('filters on stock: none left, some left; uncounted products match neither', async () => {
+      expect(await list('stock=out')).toEqual([goneId]);
+      expect(await list('stock=in')).toEqual([world.products[1].id]);
+      const admin = (await login(t, 'admin', PW.admin)).token;
+      expect((await t.http().get('/api/products?stock=nope').set(bearer(admin))).status).toBe(400);
+    });
+
+    it('filters on a car, which also holds the parts common to its brand', async () => {
+      const brand = await t.prisma.category.create({ data: { name: 'E2E brand', position: 900 } });
+      const model = await t.prisma.category.create({ data: { name: 'E2E model', parentId: brand.id, position: 901 } });
+      await t.prisma.product.update({ where: { id: world.products[0].id }, data: { categoryId: model.id } });
+      await t.prisma.product.update({ where: { id: world.products[1].id }, data: { categoryId: brand.id } });
+
+      expect(await list(`categoryId=${model.id}`)).toEqual([world.products[0].id, world.products[1].id].sort());
+      expect(await list(`categoryId=${brand.id}`)).toEqual([world.products[1].id]);
+      expect(await list(`categoryId=${model.id}&stock=in`)).toEqual([world.products[1].id]);
+    });
   });
 });

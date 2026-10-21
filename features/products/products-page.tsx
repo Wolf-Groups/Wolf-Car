@@ -22,11 +22,12 @@ import { ProductFormSheet } from "./product-form";
 import { OdooSyncBar } from "./odoo-sync-bar";
 import { ProductList } from "./product-list";
 import type { RowActions, RowPermissions } from "./product-row";
-import { fetchProducts, parsePriceFilter, type PriceFilter, productKeys } from "./queries";
+import { fetchCategories, fetchProducts, parsePriceFilter, type PriceFilter, productKeys, type StockFilter } from "./queries";
 import { Segmented } from "./segmented";
 import { useDebouncedValue } from "./use-debounced-value";
 
 const BY_NAME = "__name__";
+const ALL_CATEGORIES = "__all__";
 const REORDER_KEY = ["products", "reorder"] as const;
 
 interface Overlay {
@@ -83,6 +84,8 @@ function ProductsManager() {
   const q = useDebouncedValue(search.trim(), 250);
   const [price, setPrice] = useState<PriceFilter>(() => parsePriceFilter(searchParams.get("price")));
   const [quick, setQuick] = useState(false);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [stock, setStock] = useState<StockFilter>("all");
   const [pickedBranch, setPickedBranch] = useState<string | null>(null);
   const [form, setForm] = useState<Overlay>(closed);
   const [pricing, setPricing] = useState<Overlay>(closed);
@@ -94,9 +97,9 @@ function ProductsManager() {
   const canPickBranch = !ownBranch && canReorder;
   const branchId = ownBranch ? null : pickedBranch;
   const branchContext = ownBranch?.id ?? pickedBranch;
-  const filtered = q !== "" || price !== "all" || quick;
+  const filtered = q !== "" || price !== "all" || quick || categoryId !== null || stock !== "all";
 
-  const params = { q, price, quick, branchId };
+  const params = { q, price, quick, branchId, categoryId, stock };
   const listKey = productKeys.list(params);
   const products = useQuery({ queryKey: listKey, queryFn: () => fetchProducts(params), placeholderData: keepPreviousData });
   const branches = useQuery({
@@ -105,6 +108,7 @@ function ProductsManager() {
     enabled: canPickBranch,
     staleTime: 5 * 60_000,
   });
+  const categories = useQuery({ queryKey: ["products", "categories"], queryFn: fetchCategories, staleTime: 5 * 60_000 });
 
   const reorderable = canReorder && branchContext !== null && !filtered && !products.isPlaceholderData;
 
@@ -173,6 +177,8 @@ function ProductsManager() {
     setSearch("");
     changePrice("all");
     setQuick(false);
+    setCategoryId(null);
+    setStock("all");
   };
 
   if (!user) return null;
@@ -240,6 +246,29 @@ function ProductsManager() {
             { value: "all", label: t("filterAll") },
             { value: "priced", label: t("filterPriced") },
             { value: "unpriced", label: t("filterUnpriced") },
+          ]}
+        />
+        <Select value={categoryId ?? ALL_CATEGORIES} onValueChange={(v) => setCategoryId(v === ALL_CATEGORIES ? null : v)}>
+          <SelectTrigger aria-label={t("categoryFilterLabel")} className="max-w-full min-w-52">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_CATEGORIES}>{t("allCategories")}</SelectItem>
+            {categories.data?.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {locale === "ar" ? c.name : (c.nameEn ?? c.name)} ({c.count})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Segmented
+          label={t("stockFilterLabel")}
+          value={stock}
+          onChange={setStock}
+          options={[
+            { value: "all", label: t("filterAll") },
+            { value: "in", label: t("stockIn") },
+            { value: "out", label: t("stockOut") },
           ]}
         />
         <Button variant={quick ? "default" : "outline"} aria-pressed={quick} onClick={() => setQuick((on) => !on)}>
