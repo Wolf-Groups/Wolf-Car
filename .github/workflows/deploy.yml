@@ -4,7 +4,13 @@
 # builds, waits for health, runs the smoke test and rolls back on failure, so a
 # red run here means the previous version is still the one serving.
 #
-# Secrets: DEPLOY_SSH_KEY (private key), DEPLOY_HOST, DEPLOY_KNOWN_HOSTS.
+# The droplet's SSH port is closed to the internet, so the runner first joins
+# the Tailscale network as a short-lived tag:ci machine and connects over it.
+#
+# Secrets: DEPLOY_SSH_KEY (private key), DEPLOY_TAILNET_HOST (the server's
+# 100.x Tailscale IP), DEPLOY_TAILNET_KNOWN_HOSTS (its host keys under that IP),
+# TS_OAUTH_CLIENT_ID and TS_OAUTH_SECRET (a Tailscale OAuth client with the
+# auth_keys scope and tag:ci).
 name: Deploy
 
 on:
@@ -25,10 +31,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # The machine is ephemeral: it leaves the tailnet when the job ends.
+      - name: Join the tailnet
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          version: '1.104.2'
+          ping: ${{ secrets.DEPLOY_TAILNET_HOST }}
+
       - name: Prepare SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_TAILNET_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
@@ -38,7 +54,7 @@ jobs:
       # The server ignores whatever command is sent and runs the deploy script.
       - name: Deploy on the server
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_TAILNET_HOST }}
         run: |
           ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o BatchMode=yes \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
