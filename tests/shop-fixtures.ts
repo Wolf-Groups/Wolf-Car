@@ -24,6 +24,7 @@ export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
     createdAt: "2031-03-10T09:00:00.000Z",
     expiresAt: "2031-03-10T09:30:00.000Z",
     paidAt: null,
+    collectedAt: null,
     branch: { code: "BO", name: "Bin Omran Branch", nameAr: "فرع بن عمران" },
     customer: { name: "Sara Ali", email: "sara@example.com", phone: "+97455123456" },
     items: [

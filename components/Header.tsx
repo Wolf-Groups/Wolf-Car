@@ -9,6 +9,8 @@ import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle } 
 import { Link } from "@/i18n/navigation";
 import { LOGO } from "@/lib/content";
 import { cn } from "@/lib/utils";
+import { cardCheckoutEnabled } from "@/features/shop/card-checkout";
+import { AccountLink } from "./AccountLink";
 import { openBooking } from "./BookingForm";
 import { useContact } from "./ContactProvider";
 import { Icon } from "./Icon";
@@ -111,6 +113,7 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-0.5">
+          <AccountLink enabled={cardCheckoutEnabled()} className={onHero} />
           <ThemeToggle className={cn("hidden sm:grid", onHero)} />
           <LocaleSwitcher className={cn("hidden px-2 sm:inline-flex", onHero)} />
           <button

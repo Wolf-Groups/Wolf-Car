@@ -59,6 +59,10 @@ export const shop = {
   createOrder(body: CreateOrderBody, idempotencyKey: string): Promise<WebOrder & { replayed: boolean }> {
     return shopApi("/orders", { method: "POST", json: body, headers: { "Idempotency-Key": idempotencyKey } });
   },
+  /** The signed-in customer's orders, newest first (abandoned checkouts left out). */
+  listOrders(): Promise<WebOrder[]> {
+    return shopApi("/orders");
+  },
   getOrder(id: string): Promise<WebOrder> {
     return shopApi(`/orders/${id}`);
   },

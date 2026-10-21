@@ -385,5 +385,40 @@
     "statBrandsValue": "All",
     "statBrands": "makes served",
     "statBrandsNote": "Chinese car specialists"
+  },
+  "Account": {
+    "title": "My account",
+    "headerLink": "My account",
+    "signInTitle": "Sign in",
+    "signInIntro": "Sign in with your mobile number to see your orders.",
+    "signedInAs": "Signed in as {phone}",
+    "signOut": "Sign out",
+    "ordersTitle": "My orders",
+    "ordersEmpty": "You have no orders yet.",
+    "ordersError": "We couldn't load your orders. Please try again.",
+    "retry": "Try again",
+    "browseProducts": "Browse products",
+    "itemCount": "{count, plural, one {# item} other {# items}}",
+    "orderTitle": "Order {code}",
+    "placedOn": "Placed on {date}",
+    "backToOrders": "Back to my orders",
+    "orderNotFound": "We couldn't find this order in your account.",
+    "continuePayment": "Continue payment",
+    "state": {
+      "awaitingPayment": "Waiting for payment",
+      "paid": "Paid",
+      "collected": "Collected",
+      "refunded": "Refunded",
+      "review": "Payment under review",
+      "cancelled": "Cancelled"
+    },
+    "stateNote": {
+      "awaitingPayment": "Finish the payment before {time}, or the order is cancelled.",
+      "paid": "Show your order code at {branch} when you collect your parts.",
+      "collected": "You collected this order on {date}.",
+      "refunded": "This order was cancelled and your payment was refunded.",
+      "review": "We received your payment. The branch will contact you to finish your order.",
+      "cancelled": "This order was cancelled before it was paid."
+    }
   }
 }

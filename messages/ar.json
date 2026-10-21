@@ -385,5 +385,40 @@
     "statBrandsValue": "جميع",
     "statBrands": "السيارات",
     "statBrandsNote": "متخصصون في السيارات الصينية"
+  },
+  "Account": {
+    "title": "حسابي",
+    "headerLink": "حسابي",
+    "signInTitle": "تسجيل الدخول",
+    "signInIntro": "سجّل الدخول برقم جوالك لعرض طلباتك.",
+    "signedInAs": "مسجّل الدخول برقم {phone}",
+    "signOut": "تسجيل الخروج",
+    "ordersTitle": "طلباتي",
+    "ordersEmpty": "لا توجد لديك طلبات بعد.",
+    "ordersError": "تعذّر تحميل طلباتك. حاول مرة أخرى.",
+    "retry": "حاول مرة أخرى",
+    "browseProducts": "تصفّح المنتجات",
+    "itemCount": "{count, plural, one {قطعة واحدة} two {قطعتان} few {# قطع} many {# قطعة} other {# قطعة}}",
+    "orderTitle": "الطلب {code}",
+    "placedOn": "بتاريخ {date}",
+    "backToOrders": "العودة إلى طلباتي",
+    "orderNotFound": "لم نجد هذا الطلب في حسابك.",
+    "continuePayment": "أكمل الدفع",
+    "state": {
+      "awaitingPayment": "بانتظار الدفع",
+      "paid": "مدفوع",
+      "collected": "تم الاستلام",
+      "refunded": "تم الاسترداد",
+      "review": "الدفعة قيد المراجعة",
+      "cancelled": "ملغي"
+    },
+    "stateNote": {
+      "awaitingPayment": "أكمل الدفع قبل {time}، وإلا يُلغى الطلب.",
+      "paid": "أظهر رمز طلبك في {branch} عند استلام القطع.",
+      "collected": "استلمت هذا الطلب بتاريخ {date}.",
+      "refunded": "تم إلغاء هذا الطلب واسترداد المبلغ الذي دفعته.",
+      "review": "استلمنا دفعتك، وسيتواصل معك الفرع لإتمام طلبك.",
+      "cancelled": "أُلغي هذا الطلب قبل دفعه."
+    }
   }
 }

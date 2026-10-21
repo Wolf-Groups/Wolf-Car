@@ -239,6 +239,8 @@ export interface WebOrder {
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
+  /** when the branch handed the paid order over */
+  collectedAt: string | null;
   branch: { code: string; name: string; nameAr: string };
   customer: { name: string | null; email: string | null; phone: string };
   items: WebOrderItem[];
