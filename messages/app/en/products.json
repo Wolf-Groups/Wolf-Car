@@ -55,6 +55,11 @@
     "notSet": "Not set yet"
   },
   "listLabel": "Products",
+  "categoryFilterLabel": "Car or line",
+  "allCategories": "All cars and lines",
+  "stockFilterLabel": "Stock",
+  "stockIn": "In stock",
+  "stockOut": "Out of stock",
   "priceFilterLabel": "Price",
   "orderLabel": "List order",
   "savingOrder": "Saving the new order…",

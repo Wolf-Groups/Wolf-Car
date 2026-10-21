@@ -29,12 +29,18 @@ export class ProductsService {
    */
   async list(user: AuthUser, q: ListProductsQueryDto): Promise<ProductView[]> {
     const branchId = user.branchId ?? q.branchId ?? null;
+    // a model also holds what is common to its brand (the parent category), as on the website
+    const parentId = q.categoryId
+      ? ((await this.prisma.category.findUnique({ where: { id: q.categoryId }, select: { parentId: true } }))?.parentId ?? null)
+      : null;
     const where: Prisma.ProductWhereInput = {
       // the hidden rows behind a service's prices are edited on the services page
       serviceId: null,
       ...(q.visibility === 'all' ? {} : { isActive: q.visibility !== 'hidden' }),
       ...(q.quickService ? { isQuickService: true } : {}),
       ...(q.price === 'priced' ? { price: { not: null } } : q.price === 'unpriced' ? { price: null } : {}),
+      ...(q.categoryId ? { categoryId: { in: parentId ? [q.categoryId, parentId] : [q.categoryId] } } : {}),
+      ...(q.stock === 'in' ? { odooStock: { gt: 0 } } : q.stock === 'out' ? { odooStock: { lte: 0 } } : {}),
       ...(q.q
         ? { OR: [{ name: { contains: q.q, mode: 'insensitive' } }, { barcode: { contains: q.q, mode: 'insensitive' } }] }
         : {}),

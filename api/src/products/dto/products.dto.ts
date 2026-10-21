@@ -105,4 +105,14 @@ export class ListProductsQueryDto {
   @IsOptional()
   @IsUUID()
   branchId?: string;
+
+  /** One car model or line (e.g. THABT); a model also lists the parts common to its brand, as on the website. */
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  /** "in": Odoo has some free to sell; "out": Odoo has none. Products Odoo does not count match neither. */
+  @IsOptional()
+  @IsIn(['in', 'out'])
+  stock?: 'in' | 'out';
 }
