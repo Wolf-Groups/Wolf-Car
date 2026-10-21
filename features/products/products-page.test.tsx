@@ -67,6 +67,23 @@ describe("products page permissions", () => {
     expect(screen.getAllByRole("button", { name: /^Price history of / })).toHaveLength(2);
   });
 
+  it("shows how many of an Odoo product are in stock, and nothing for one Odoo does not count", async () => {
+    server.use(
+      http.get("/api/products", () =>
+        HttpResponse.json([
+          { ...brake, fromOdoo: true, stock: 12 },
+          { ...oil, fromOdoo: true, stock: -1 },
+          { ...mats, fromOdoo: true, stock: null },
+        ]),
+      ),
+    );
+    renderWithApp(<ProductsPage />, { user: finance() });
+
+    expect(await screen.findByText("In stock: 12")).toBeInTheDocument();
+    expect(screen.getAllByText(/^(In stock|Out of stock)/)).toHaveLength(2);
+    expect(screen.getByText("Out of stock")).toBeInTheDocument();
+  });
+
   it("a Branch Manager can add, edit and reorder but not price", async () => {
     server.use(http.get("/api/products", () => HttpResponse.json([brake, oil])));
     renderWithApp(<ProductsPage />, { user: manager() });

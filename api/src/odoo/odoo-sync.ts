@@ -16,14 +16,18 @@ import { categoryTile } from './category-image';
 import {
   arabicCategoryName,
   categoryName,
+  freeStock,
   legacyCategoryKey,
   parentCategoryOdooId,
+  QUANT_FIELDS,
   skipReason,
+  STOCK_DOMAIN,
   toProduct,
   VARIANT_FIELDS,
   type OdooAttributeValue,
   type OdooCategory,
   type OdooProduct,
+  type OdooQuant,
   type OdooVariant,
 } from './odoo-rows';
 import { placeInBranch } from './place-in-branch';
@@ -65,6 +69,8 @@ export interface SyncSummary {
   /** not touched, because Odoo has not changed them since the last run */
   unchanged: number;
   repriced: number;
+  /** products whose free stock moved, including those that changed in no other way */
+  restocked: number;
   switchedOff: number;
   imagesFetched: number;
   hiddenLegacy: number;
@@ -76,7 +82,11 @@ const IMAGE_BATCH = 25;
 /** Bump when the mapping in odoo-rows.ts changes, so every product is refreshed once. */
 const MAPPING_VERSION = 'm1';
 
-type SyncProduct = OdooProduct & { stamp: string };
+type SyncProduct = OdooProduct & {
+  stamp: string;
+  /** units free to sell; null when Odoo keeps no stock for it */
+  stock: number | null;
+};
 
 export async function syncOdooCatalogue(
   prisma: PrismaClient,
@@ -106,6 +116,7 @@ export async function syncOdooCatalogue(
     updated: 0,
     unchanged: 0,
     repriced: 0,
+    restocked: 0,
     switchedOff: 0,
     imagesFetched: 0,
     hiddenLegacy: 0,
@@ -148,9 +159,14 @@ export async function syncOdooCatalogue(
       : []
     ).map((tmpl) => [tmpl.id, tmpl.write_date]),
   );
+  // stock moves without touching the product's own dates, so it is read whole every run
+  const stock = freeStock(
+    await odoo.searchRead<OdooQuant>('stock.quant', [...STOCK_DOMAIN], QUANT_FIELDS),
+  );
   const products: SyncProduct[] = wantedVariants.map((v) => ({
     ...toProduct(v, values.get(v.product_template_variant_value_ids[0])),
     stamp: `${v.write_date}|${templateDates.get(v.product_tmpl_id[0]) ?? ''}|${MAPPING_VERSION}`,
+    stock: v.is_storable ? (stock.get(v.id) ?? 0) : null,
   }));
   summary.imported = products.length;
 
@@ -164,6 +180,7 @@ export async function syncOdooCatalogue(
           imageKey: true,
           price: true,
           odooStamp: true,
+          odooStock: true,
           isActive: true,
         },
       })
@@ -180,6 +197,11 @@ export async function syncOdooCatalogue(
   });
   summary.unchanged = products.length - changed.length;
   summary.switchedOff = stale.filter((p) => p.isActive).length;
+  const restocked = products.filter((p) => {
+    const before = existing.get(p.odooId);
+    return before !== undefined && before.odooStock !== p.stock;
+  });
+  summary.restocked = restocked.length;
 
   if (dryRun) {
     summary.created = changed.filter((p) => !existing.has(p.odooId)).length;
@@ -367,6 +389,7 @@ export async function syncOdooCatalogue(
           odooId: p.odooId,
           odooStamp: p.stamp,
           odooTemplateId: p.templateOdooId,
+          odooStock: p.stock,
           variantLabel: p.variantLabel,
           variantColor: p.variantColor,
           name: p.name,
@@ -414,6 +437,13 @@ export async function syncOdooCatalogue(
     }
   }
   for (const key of replacedImages) await deleteStoredImage(key, uploadDir);
+
+  // one write per stock level, not per product: most runs move only a handful
+  const byStock = new Map<number | null, number[]>();
+  for (const p of restocked) byStock.set(p.stock, [...(byStock.get(p.stock) ?? []), p.odooId]);
+  for (const [odooStock, odooIds] of byStock) {
+    await prisma.product.updateMany({ where: { odooId: { in: odooIds } }, data: { odooStock } });
+  }
 
   if (stale.length) {
     await prisma.product.updateMany({

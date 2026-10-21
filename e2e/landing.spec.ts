@@ -25,9 +25,9 @@ for (const locale of ["ar", "en"] as const) {
   }
 }
 
-test("outside the car-model cards, the landing page has exactly two new links, both in the footer", async ({ page }) => {
+test("outside the car-model cards, the landing page links to the catalogue once, in the footer, and never to the staff sign-in", async ({ page }) => {
   await page.goto("/en");
   const appLinks = page.locator(':not(#catalog *):is(a[href="/en/products"], a[href="/en/login"])');
-  await expect(appLinks).toHaveCount(2);
-  await expect(page.locator("footer").locator('a[href="/en/products"], a[href="/en/login"]')).toHaveCount(2);
+  await expect(appLinks).toHaveCount(1);
+  await expect(page.locator("footer").locator('a[href="/en/products"]')).toHaveCount(1);
 });

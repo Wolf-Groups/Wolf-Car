@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock3, History, Pencil, ScanBarcode, Wrench } from "lucide-react";
+import { Boxes, Clock3, History, Pencil, ScanBarcode, Wrench } from "lucide-react";
 import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { memo, type ReactNode } from "react";
@@ -69,9 +69,21 @@ export function PriceValue({ product, canPrice }: { product: Product; canPrice: 
   );
 }
 
+/** How many Odoo had free to sell at the last sync; nothing for a product Odoo keeps no stock for. */
+export function StockValue({ stock }: { stock: number | null | undefined }) {
+  const t = useTranslations("Products.stock");
+  if (stock === null || stock === undefined) return null;
+  return (
+    <Pill tone={stock > 0 ? "success" : "danger"}>
+      <Boxes className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+      {stock > 0 ? t("available", { n: stock }) : t("out")}
+    </Pill>
+  );
+}
+
 /**
- * One product in the list: thumbnail, name, description, barcode, price and
- * the actions the user may take. Card-like on phones, a single row from md up.
+ * One product in the list: thumbnail, name, description, barcode, price,
+ * stock and the actions the user may take. Card-like on phones, a single row from md up.
  * Memoised so dragging (which re-renders every sortable wrapper) stays cheap.
  */
 export const ProductRowContent = memo(function ProductRowContent({
@@ -134,6 +146,11 @@ export const ProductRowContent = memo(function ProductRowContent({
         <div className="md:w-40 md:shrink-0">
           <PriceValue product={product} canPrice={permissions.canPrice} />
         </div>
+        {product.fromOdoo && (
+          <div className="md:w-32 md:shrink-0">
+            <StockValue stock={product.stock} />
+          </div>
+        )}
         {actions && (
           <div className="ms-auto flex shrink-0 items-center gap-1">
             {product.fromOdoo && <Pill tone="neutral">{t("odoo.fromOdoo")}</Pill>}

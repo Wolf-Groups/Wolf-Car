@@ -104,9 +104,6 @@ export async function Footer() {
             <Link href="/refund-policy" className="hover:text-white">
               {t("refundLink")}
             </Link>
-            <Link href="/login" className="hover:text-white">
-              {t("staffLogin")}
-            </Link>
           </nav>
         </div>
       </Wrap>

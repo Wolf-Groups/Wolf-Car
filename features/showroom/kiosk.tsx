@@ -29,6 +29,7 @@ import { type Filters, filterProducts, isFiltering, NO_FILTERS } from "./filter"
 import { newIdempotencyKey } from "./idempotency";
 import { KioskFilters, KioskSearch } from "./kiosk-toolbar";
 import { cn } from "@/lib/utils";
+import { isAvailable } from "@/lib/stock";
 import { groupVariants } from "@/lib/variants";
 import { ProductGroupCard } from "./product-card";
 import { serviceProducts, ServicesView } from "./services-view";
@@ -198,6 +199,7 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
   );
 
   const handleAdd = (product: ShowroomProduct) => {
+    if (!isAvailable(product)) return false;
     if (!canAdd(cart, product.id)) {
       toast(
         quantityOf(cart, product.id) > 0
