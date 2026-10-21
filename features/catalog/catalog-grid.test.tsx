@@ -35,6 +35,15 @@ const names = () => within(screen.getByTestId("catalog-grid")).getAllByRole("hea
 afterEach(() => act(() => cart.clear()));
 
 describe("public catalog grid", () => {
+  it("marks what is out of stock as not available, offers no add button for it and lists it last", () => {
+    renderGrid([{ ...products[0], available: false }, products[1], products[2]]);
+    expect(names()).toEqual(["3D Floor Mats", "Phone Holder", "4K Dash Cam"]);
+    const card = screen.getAllByRole("listitem")[2];
+    expect(within(card).getByText("Not available")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Add to cart" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Add to cart" })).toHaveLength(2);
+  });
+
   it("shows the full-size image, name and price of every product", () => {
     renderGrid(products);
     expect(screen.getAllByRole("listitem")).toHaveLength(3);

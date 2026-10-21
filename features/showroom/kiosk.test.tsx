@@ -121,6 +121,17 @@ describe("showroom kiosk", () => {
     expect(within(panel()).getByRole("button", { name: "Place order" })).toBeDisabled();
   });
 
+  it("shows an out-of-stock product last, as not available, with no add button", async () => {
+    server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog([{ ...BRAKES, available: false }, CLIP]))));
+    renderKiosk();
+
+    expect(await screen.findByRole("heading", { name: "Brake pads" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Trim clip", "Brake pads"]);
+    const card = screen.getByRole("article", { name: "Brake pads" });
+    expect(within(card).getByText("Not available")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
+  });
+
   it("filters the grid by car model and keeps an All tab", async () => {
     server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog())));
     const { user } = renderKiosk();

@@ -1,4 +1,5 @@
 import type { ShowroomProduct } from "@/lib/api/types";
+import { availableFirst } from "@/lib/stock";
 
 export type Sort = "default" | "priceAsc" | "priceDesc";
 
@@ -41,6 +42,7 @@ export function normalize(text: string): string {
 
 /**
  * The kiosk's search, price band and sort; the default sort keeps the manager's order.
+ * Whatever the sort, what is out of stock comes last.
  * `cars` maps a category id to its names, so "tank" finds every Tank product
  * even though the car is not written in each product's name.
  */
@@ -60,7 +62,7 @@ export function filterProducts(
     return words.every((w) => haystack.includes(w));
   });
 
-  if (sort === "default") return matched;
+  if (sort === "default") return availableFirst(matched);
   const dir = sort === "priceAsc" ? 1 : -1;
-  return [...matched].sort((a, b) => dir * (Number(a.price) - Number(b.price)));
+  return availableFirst([...matched].sort((a, b) => dir * (Number(a.price) - Number(b.price))));
 }

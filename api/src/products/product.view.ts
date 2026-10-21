@@ -10,6 +10,7 @@ export const PRODUCT_SELECT = {
   isActive: true,
   isQuickService: true,
   odooId: true,
+  odooStock: true,
   imageKey: true,
   price: true,
   priceUpdatedAt: true,
@@ -26,6 +27,7 @@ type ProductRow = {
   isActive: boolean;
   isQuickService: boolean;
   odooId: number | null;
+  odooStock: number | null;
   imageKey: string;
   price: Prisma.Decimal | null;
   priceUpdatedAt: Date | null;
@@ -46,6 +48,8 @@ export function productView(p: ProductRow, position?: number) {
     quickService: p.isQuickService,
     /** its name, barcode, photo and price are kept up to date from Odoo and cannot be edited here */
     fromOdoo: p.odooId !== null,
+    /** units free to sell in Odoo at the last sync; null when Odoo keeps no stock for it */
+    stock: p.odooStock,
     price: money(p.price),
     priceUpdatedAt: p.priceUpdatedAt,
     imageUrl: imageUrl(p.imageKey),

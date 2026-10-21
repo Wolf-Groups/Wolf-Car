@@ -56,8 +56,12 @@ describe('ShowroomService', () => {
     // only priced products that belong to this branch's catalogue are accepted
     expect(prisma.product.findMany.mock.calls[0][0]?.where).toMatchObject({
       price: { not: null },
-      // a part must be on this branch's list; a service is sold at every branch
-      OR: [{ branchPositions: { some: { branchId: 'gh' } } }, { service: { isActive: true } }],
+      AND: [
+        // a part must be on this branch's list; a service is sold at every branch
+        { OR: [{ branchPositions: { some: { branchId: 'gh' } } }, { service: { isActive: true } }] },
+        // and Odoo must not have run out of it
+        { OR: [{ odooStock: null }, { odooStock: { gt: 0 } }] },
+      ],
     });
   });
 

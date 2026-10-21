@@ -1,6 +1,7 @@
 import {
   arabicCategoryName,
   categoryName,
+  freeStock,
   legacyCategoryKey,
   parentCategoryOdooId,
   skipReason,
@@ -21,6 +22,7 @@ const variant = (over: Partial<OdooVariant> = {}): OdooVariant => ({
   active: true,
   sale_ok: true,
   type: 'consu',
+  is_storable: true,
   categ_id: [29, 'Car / CAR ACCESSORIES'],
   write_date: '2026-08-12 07:27:15',
   ...over,
@@ -208,5 +210,17 @@ describe('arabicCategoryName', () => {
 
   it('returns null for a name it does not know', () => {
     expect(arabicCategoryName('THABT')).toBeNull();
+  });
+});
+
+describe('freeStock', () => {
+  const quant = (id: number, quantity: number, reserved_quantity = 0) => ({ product_id: [id, 'x'] as [number, string], quantity, reserved_quantity });
+
+  it('sums the locations of a variant and takes off what is reserved', () => {
+    expect(freeStock([quant(7, 10), quant(7, 5, 3), quant(8, 2)])).toEqual(new Map([[7, 12], [8, 2]]));
+  });
+
+  it('keeps a negative count, as Odoo has it, and rounds part units down', () => {
+    expect(freeStock([quant(7, -2), quant(8, 2.5)])).toEqual(new Map([[7, -2], [8, 2]]));
   });
 });

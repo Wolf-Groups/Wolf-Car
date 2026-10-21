@@ -4,7 +4,7 @@ This repository contains:
 
 | Part | Where | What |
 |---|---|---|
-| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English). Unchanged except for two footer links: **Product catalog** and **Staff login**. |
+| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English). Unchanged except for a **Product catalog** footer link. Staff sign in at `/login` (not linked from the site). |
 | **Public catalog** | `app/[locale]/products` | Products with image, name, description, category and price. Barcodes never leave the API here. Products without a price cannot be bought online; they are ordered on WhatsApp. |
 | **Online checkout** | `app/[locale]/checkout`, `features/shop/`, `api/src/shop/` | A visitor fills a basket, signs in with a one-time code sent to a Qatari mobile, pays by card through Tap and collects the parts at Bin Omran. The paid order is queued for Odoo and shows in the dashboard as *paid online*. See section 11. |
 | **Staff dashboards** | `app/[locale]/(app)/(staff)` | One login for everyone; the account's role decides the landing page. Products, pricing, orders, users, branches, permissions, activity log, account security. |

@@ -66,6 +66,12 @@ describe('Showroom & orders (e2e)', () => {
         price: '499.00',
         imageUrl: expect.stringMatching(/^\/api\/uploads\//),
         thumbUrl: expect.stringMatching(/-sm\.webp$/),
+        categoryId: null,
+        categoryIds: [],
+        groupId: null,
+        variantLabel: null,
+        variantColor: null,
+        available: true,
       });
     });
 

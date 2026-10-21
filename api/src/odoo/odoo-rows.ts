@@ -20,6 +20,8 @@ export interface OdooVariant {
   active: boolean;
   sale_ok: boolean;
   type: string;
+  /** false for a good Odoo does not count (no stock is kept for it) */
+  is_storable: boolean;
   categ_id: [number, string] | false;
   /** "2026-08-12 07:27:15" — when the variant was last changed in Odoo */
   write_date: string;
@@ -35,6 +37,7 @@ export const VARIANT_FIELDS = [
   'active',
   'sale_ok',
   'type',
+  'is_storable',
   'categ_id',
   'write_date',
 ] as const;
@@ -44,6 +47,33 @@ export interface OdooAttributeValue {
   id: number;
   name: string;
   html_color: string | false;
+}
+
+/** A stock.quant row: how many of one variant lie in one location. */
+export interface OdooQuant {
+  product_id: [number, string];
+  quantity: number;
+  reserved_quantity: number;
+}
+
+/** The internal locations (shelves, not customers or suppliers): what the company holds. */
+export const STOCK_DOMAIN = [['location_id.usage', '=', 'internal']] as const;
+export const QUANT_FIELDS = ['product_id', 'quantity', 'reserved_quantity'] as const;
+
+/**
+ * Units free to sell per variant id: on hand minus reserved, summed over the
+ * locations. Read from stock.quant because the integration user may not read
+ * product.product's own qty_available (it needs Manufacturing rights).
+ */
+export function freeStock(quants: readonly OdooQuant[]): Map<number, number> {
+  const free = new Map<number, number>();
+  for (const q of quants) {
+    const id = q.product_id[0];
+    free.set(id, (free.get(id) ?? 0) + q.quantity - q.reserved_quantity);
+  }
+  // Odoo keeps units as floats; this catalogue sells whole parts
+  for (const [id, units] of free) free.set(id, Math.floor(units + 1e-9));
+  return free;
 }
 
 /** A product.category row. */
