@@ -17,6 +17,8 @@ export interface LegalDoc {
   title: string;
   intro: string;
   sections: LegalSection[];
+  /** "2026-10-21"; when the document changed on its own date. Defaults to LEGAL_UPDATED. */
+  updated?: string;
 }
 
 const PRIVACY: Record<Locale, LegalDoc> = {
@@ -251,9 +253,140 @@ const TERMS: Record<Locale, LegalDoc> = {
   },
 };
 
+/**
+ * Refund and return policy. DRAFT written for Tap's merchant review and for
+ * the customers: the numbers (7 days, 3 working days) and the exclusions are
+ * proposals the owner must confirm before publishing. It covers today's
+ * branch and WhatsApp sales and the online card payments that come with the
+ * checkout (pickup at Bin Omran; unpaid online orders expire after 30 minutes).
+ */
+const REFUND: Record<Locale, LegalDoc> = {
+  en: {
+    title: "Refund and Return Policy",
+    updated: "2026-10-21",
+    intro:
+      "This policy explains how returns, exchanges and refunds work for parts, accessories and services bought from Wolf Car Auto Services at our Al Gharrafa or Bin Omran branch, through our home service, or paid for online on this website.",
+    sections: [
+      {
+        heading: "Parts and accessories",
+        paragraphs: [
+          "You can return or exchange a part or accessory within 7 days of buying it if it has not been installed or used, it is in its original packaging and condition, and you have the invoice or order number.",
+          "Parts ordered specially for your car, and electrical or electronic parts whose packaging seal has been opened, cannot be returned unless they are faulty.",
+        ],
+      },
+      {
+        heading: "Faulty or wrong parts",
+        paragraphs: [
+          "If a part is faulty, or does not fit the car model we confirmed with you, we will replace it or refund it in full. Please contact the branch as soon as you notice the problem.",
+        ],
+      },
+      {
+        heading: "Services and installation",
+        paragraphs: [
+          "Services such as paint protection film, tinting, polishing, programming and installation can be cancelled free of charge before the work starts.",
+          "Once the work has started it cannot be refunded. If something is not right, we put it right under the warranty that applies to the product or service, as explained in our Terms of Service.",
+        ],
+      },
+      {
+        heading: "Orders paid online by card",
+        paragraphs: [
+          "If you pay for an order online and cancel it before you collect it, we refund the full amount to the same card.",
+          "An online order that has not been paid is cancelled automatically after 30 minutes, and nothing is charged.",
+          "If a card payment does not match your order, or you were charged twice by mistake, we refund the extra charge to the same card.",
+        ],
+      },
+      {
+        heading: "How refunds are paid",
+        paragraphs: [
+          "Refunds are made by the original payment method: card payments go back to the same card, and cash payments are refunded in cash or by bank transfer at the branch.",
+          "We process an approved card refund within 3 working days. Your bank may then take 5 to 14 working days to show it on your statement.",
+          "Purchases paid in installments through PayLater are refunded according to PayLater's terms.",
+        ],
+      },
+      {
+        heading: "How to ask for a return or refund",
+        paragraphs: [
+          "Contact the branch where you bought the item, or the Bin Omran branch for online orders, by phone or WhatsApp, and give us your invoice or order number. Bin Omran: +974 7100 8939. Al Gharrafa: +974 7100 7113.",
+        ],
+      },
+      {
+        heading: "Your rights",
+        paragraphs: [
+          "This policy does not limit your rights under Qatar's Consumer Protection Law No. 8 of 2008.",
+        ],
+      },
+      {
+        heading: "Changes",
+        paragraphs: ["If we change this policy we will publish the updated version on this page with a new date."],
+      },
+    ],
+  },
+  ar: {
+    title: "سياسة الاسترجاع والاستبدال",
+    updated: "2026-10-21",
+    intro:
+      "توضح هذه السياسة كيفية الاسترجاع والاستبدال واسترداد المبالغ للقطع والإكسسوارات والخدمات التي تشتريها من وولف كار لخدمات السيارات في فرع الغرافة أو فرع بن عمران، أو عبر الخدمة المنزلية، أو بالدفع الإلكتروني على هذا الموقع.",
+    sections: [
+      {
+        heading: "القطع والإكسسوارات",
+        paragraphs: [
+          "يمكنك استرجاع أو استبدال القطعة أو الإكسسوار خلال 7 أيام من تاريخ الشراء إذا لم يتم تركيبها أو استخدامها، وكانت في غلافها وحالتها الأصلية، ومعك الفاتورة أو رقم الطلب.",
+          "لا يمكن استرجاع القطع المطلوبة خصيصًا لسيارتك، ولا القطع الكهربائية أو الإلكترونية بعد فتح ختم غلافها، إلا إذا كانت معيبة.",
+        ],
+      },
+      {
+        heading: "القطع المعيبة أو غير المطابقة",
+        paragraphs: [
+          "إذا كانت القطعة معيبة أو غير مناسبة لموديل السيارة الذي أكدناه معك، نستبدلها أو نعيد لك المبلغ كاملًا. نرجو التواصل مع الفرع فور ملاحظة المشكلة.",
+        ],
+      },
+      {
+        heading: "الخدمات والتركيب",
+        paragraphs: [
+          "يمكن إلغاء الخدمات مثل فيلم حماية الطلاء والتظليل والتلميع والبرمجة والتركيب دون أي رسوم قبل بدء العمل.",
+          "بعد بدء العمل لا يمكن استرداد المبلغ، وإذا لم تكن النتيجة كما يجب نعالجها وفق الضمان الذي ينطبق على المنتج أو الخدمة كما هو موضح في الشروط والأحكام.",
+        ],
+      },
+      {
+        heading: "الطلبات المدفوعة بالبطاقة عبر الموقع",
+        paragraphs: [
+          "إذا دفعت قيمة طلبك عبر الموقع وألغيته قبل استلامه، نعيد لك المبلغ كاملًا إلى البطاقة نفسها.",
+          "يُلغى الطلب الإلكتروني غير المدفوع تلقائيًا بعد 30 دقيقة، ولا يُخصم أي مبلغ.",
+          "إذا لم يطابق المبلغ المدفوع قيمة طلبك، أو خُصم منك المبلغ مرتين عن طريق الخطأ، نعيد المبلغ الزائد إلى البطاقة نفسها.",
+        ],
+      },
+      {
+        heading: "طريقة إعادة المبلغ",
+        paragraphs: [
+          "نعيد المبلغ بطريقة الدفع الأصلية: المدفوعات بالبطاقة تُعاد إلى البطاقة نفسها، والمدفوعات النقدية تُعاد نقدًا أو بتحويل بنكي في الفرع.",
+          "ننفّذ استرداد المبلغ إلى البطاقة خلال 3 أيام عمل من الموافقة عليه، وقد يستغرق البنك بعد ذلك من 5 إلى 14 يوم عمل لإظهاره في كشف حسابك.",
+          "المشتريات المدفوعة بالتقسيط عبر PayLater يُعاد مبلغها وفق شروط PayLater.",
+        ],
+      },
+      {
+        heading: "كيف تطلب الاسترجاع أو استرداد المبلغ",
+        paragraphs: [
+          "تواصل مع الفرع الذي اشتريت منه، أو مع فرع بن عمران للطلبات الإلكترونية، بالاتصال أو عبر واتساب، وزوّدنا برقم الفاتورة أو رقم الطلب. فرع بن عمران: \u2066+974 7100 8939\u2069. فرع الغرافة: \u2066+974 7100 7113\u2069.",
+        ],
+      },
+      {
+        heading: "حقوقك",
+        paragraphs: ["لا تحدّ هذه السياسة من حقوقك وفق قانون حماية المستهلك القطري رقم (8) لسنة 2008."],
+      },
+      {
+        heading: "التعديلات",
+        paragraphs: ["إذا عدّلنا هذه السياسة فسننشر النسخة المحدثة في هذه الصفحة مع تاريخ جديد."],
+      },
+    ],
+  },
+};
+
 export function getPrivacy(locale: Locale) {
   return PRIVACY[locale];
 }
 export function getTerms(locale: Locale) {
   return TERMS[locale];
+}
+export function getRefund(locale: Locale) {
+  return REFUND[locale];
 }
