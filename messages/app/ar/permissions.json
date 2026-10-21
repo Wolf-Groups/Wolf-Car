@@ -35,6 +35,7 @@
     "order_cancel": "إلغاء الطلبات قيد الانتظار",
     "order_confirm": "تأكيد الطلبات",
     "order_receipt_download": "تنزيل الإيصالات",
+    "order_odoo_retry": "إعادة إرسال الطلبات الفاشلة إلى أودو",
     "booking_ppf_read": "عرض حجوزات PPF",
     "booking_ppf_manage": "إدارة حجوزات PPF",
     "booking_general_manage": "إدارة الحجوزات العامة",

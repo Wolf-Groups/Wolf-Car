@@ -1,8 +1,8 @@
-import { ArgumentsHost, BadRequestException, NotFoundException } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import { Prisma } from '../../generated/prisma/client';
 import { AccountLockedException } from '../errors';
-import { AllExceptionsFilter } from './all-exceptions.filter';
+import { AllExceptionsFilter, describeError } from './all-exceptions.filter';
 
 function run(exception: unknown) {
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn(), setHeader: jest.fn(), headersSent: false };
@@ -59,5 +59,27 @@ describe('AllExceptionsFilter', () => {
 
   it('maps multer size errors to 413', () => {
     expect(run({ name: 'MulterError', code: 'LIMIT_FILE_SIZE' }).status).toBe(413);
+  });
+
+  it('passes the unavailable productIds through, and drops anything that is not a list of ids', () => {
+    const unavailable = (productIds: unknown) => new BadRequestException({ code: 'PRODUCT_UNAVAILABLE', message: 'Some products are no longer available.', productIds });
+    expect(run(unavailable(['p1', 'p2'])).body).toMatchObject({ statusCode: 400, code: 'PRODUCT_UNAVAILABLE', productIds: ['p1', 'p2'] });
+    expect(describeError(unavailable('p1'))).not.toHaveProperty('productIds');
+    expect(describeError(unavailable([{ id: 'p1' }]))).not.toHaveProperty('productIds');
+  });
+
+  it('passes a string reason through (402 PAYMENT_FAILED, 502 REFUND_FAILED), and drops any other kind', () => {
+    // read loosely: ErrorBody gains `reason?: string` in the plan's Task 6
+    const reasonOf = (e: unknown) => (describeError(e) as unknown as Record<string, unknown>).reason;
+    expect(reasonOf(new HttpException({ code: 'PAYMENT_FAILED', message: 'The card was not accepted.', reason: 'INVALID_TOKEN' }, 402))).toBe('INVALID_TOKEN');
+    expect(run(new HttpException({ code: 'REFUND_FAILED', message: 'The refund did not go through.', reason: 'REFUND_DECLINED' }, 502)).body).toMatchObject({
+      statusCode: 502,
+      code: 'REFUND_FAILED',
+      reason: 'REFUND_DECLINED',
+    });
+    const odd = describeError(new HttpException({ code: 'PAYMENT_FAILED', message: 'x', reason: { secret: 'sk_live_x' } }, 402));
+    expect(odd).not.toHaveProperty('reason');
+    expect(odd).toMatchObject({ statusCode: 402, code: 'PAYMENT_FAILED' });
+    expect(describeError(new HttpException({ code: 'PAYMENT_FAILED', message: 'x', reason: 42 }, 402))).not.toHaveProperty('reason');
   });
 });

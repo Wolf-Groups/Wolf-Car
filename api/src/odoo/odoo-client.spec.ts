@@ -85,4 +85,21 @@ describe('OdooClient', () => {
       'Odoo answered HTTP 502 with something that is not JSON',
     );
   });
+
+  // Task 9 of the online-checkout plan: the two write methods OdooWriter needs.
+  it('creates a record with execute_kw create and returns the new id', async () => {
+    const { fn, calls } = fakeFetch({ result: 7 }, { result: 11 });
+    expect(await new OdooClient(cfg, fn).create('res.partner', { name: 'Sara' })).toBe(11);
+    expect(calls[1].body.params).toEqual({
+      service: 'object',
+      method: 'execute_kw',
+      args: ['db1', 7, 'secret-key', 'res.partner', 'create', [[{ name: 'Sara' }]], {}],
+    });
+  });
+
+  it('calls a model method on ids', async () => {
+    const { fn, calls } = fakeFetch({ result: 7 }, { result: true });
+    expect(await new OdooClient(cfg, fn).call('sale.order', 'action_confirm', [42])).toBe(true);
+    expect(calls[1].body.params.args).toEqual(['db1', 7, 'secret-key', 'sale.order', 'action_confirm', [[42]], {}]);
+  });
 });

@@ -1,10 +1,14 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
 import { mock, mockDeep } from 'jest-mock-extended';
 import { authUser } from '../../test/unit/helpers';
 import type { AuditTrail } from '../activity/audit-trail.service';
 import { OrderLockedException } from '../common/errors';
 import { Prisma } from '../generated/prisma/client';
+import type { OdooOrdersService } from '../odoo/odoo-orders.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import type { ListOrdersQueryDto } from './dto/orders.dto';
+import type { PaymentsService } from '../shop/payments/payments.service';
+import { ORDER_DETAIL_SELECT } from './order.view';
 import { OrdersService } from './orders.service';
 
 const orderRow = (status = 'PENDING') => ({
@@ -19,6 +23,16 @@ const orderRow = (status = 'PENDING') => ({
   updatedAt: new Date(),
   confirmedAt: null,
   cancelledAt: null,
+  source: 'SHOWROOM',
+  paymentStatus: 'NONE',
+  paidAt: null,
+  customerPhone: null,
+  customerEmail: null,
+  customerId: null,
+  collectedAt: null,
+  collectedBy: null,
+  payments: [],
+  odooOutbox: null,
   branch: { id: 'gh', code: 'GH', name: 'GH', nameAr: 'GH' },
   createdBy: { id: 'm', username: 'gh.manager', displayName: 'M' },
   confirmedBy: null,
@@ -30,10 +44,27 @@ const orderRow = (status = 'PENDING') => ({
   ],
 });
 
+/** A paid web order as the detail select will read it (newest payment first). */
+const webOrderRow = (over: Record<string, unknown> = {}) => ({
+  ...orderRow('CONFIRMED'),
+  code: 'BO-000001',
+  branch: { id: 'bo', code: 'BO', name: 'Bin Omran', nameAr: 'بن عمران' },
+  source: 'WEB',
+  paymentStatus: 'PAID',
+  paidAt: new Date(),
+  customerPhone: '+97455123456',
+  customerEmail: 'sara@example.qa',
+  customerId: 'c-1',
+  payments: [{ id: 'pay-1', status: 'CAPTURED', chargeId: 'chg_1', failureCode: null, refundId: null, amount: new Prisma.Decimal('300'), currency: 'QAR' }],
+  ...over,
+});
+
 describe('OrdersService', () => {
   const prisma = mockDeep<PrismaService>();
   const trail = mock<AuditTrail>();
-  const service = new OrdersService(prisma, trail);
+  const payments = mock<PaymentsService>();
+  const odooOrders = mock<OdooOrdersService>();
+  const service = new OrdersService(prisma, trail, payments, odooOrders);
   const cashier = authUser({ role: 'CASHIER', branchId: 'gh' }, ['order.read.branch', 'order.update', 'order.confirm']);
   const admin = authUser({ role: 'SUPER_ADMIN', branchId: null });
 
@@ -54,6 +85,46 @@ describe('OrdersService', () => {
     expect(where.AND).not.toContainEqual({ branchId: 'bo' });
     expect(where.AND).toContainEqual({ code: 'GH-000042' });
     expect(where.AND).toContainEqual({ status: 'PENDING' });
+  });
+
+  it('filters by source when asked (Task 8: ?source=WEB)', async () => {
+    prisma.order.findMany.mockResolvedValue([]);
+    prisma.order.count.mockResolvedValue(0);
+    // ListOrdersQueryDto gains `source` in Task 8
+    const query = { page: 1, pageSize: 20, source: 'WEB' } as ListOrdersQueryDto;
+    await service.list(cashier, query);
+    const where = prisma.order.findMany.mock.calls[0][0]?.where as { AND: unknown[] };
+    expect(where.AND).toContainEqual({ source: 'WEB' });
+    expect(where.AND).toContainEqual({ branchId: 'gh' });
+  });
+
+  describe('abandoned checkouts (web orders cancelled before any card was charged)', () => {
+    const abandoned = { NOT: { source: 'WEB', status: 'CANCELLED', paymentStatus: 'PENDING', payments: { none: { status: 'CAPTURED' } } } };
+    const whereFor = async (query: Partial<ListOrdersQueryDto>) => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+      await service.list(admin, { page: 1, pageSize: 20, ...query } as ListOrdersQueryDto);
+      const where = prisma.order.findMany.mock.calls[0][0]?.where as { AND: unknown[] };
+      expect(prisma.order.count.mock.calls[0][0]?.where).toEqual(where);
+      return where;
+    };
+
+    it.each([
+      ['no filter', {}],
+      ['the pending filter', { status: 'PENDING' }],
+      ['the confirmed filter', { status: 'CONFIRMED' }],
+      ['showroom orders', { source: 'SHOWROOM' }],
+      ['one day', { from: '2026-10-20', to: '2026-10-20' }],
+    ])('leaves them out by default (%s)', async (_label, query) => {
+      expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).toContainEqual(abandoned);
+    });
+
+    it.each([
+      ['status=CANCELLED', { status: 'CANCELLED' }],
+      ['source=WEB', { source: 'WEB' }],
+    ])('shows them when the list asks for %s', async (_label, query) => {
+      expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).not.toContainEqual(abandoned);
+    });
   });
 
   it('interprets date-only filters as Qatar calendar days (inclusive)', async () => {
@@ -118,8 +189,271 @@ describe('OrdersService', () => {
 
   it('lets only the Super Admin cancel a confirmed order', async () => {
     prisma.order.updateMany.mockResolvedValue({ count: 1 });
-    prisma.order.findFirst.mockResolvedValue(orderRow('CANCELLED') as never);
+    // Task 8: the order is read (in the write scope) before the transition, then again after it
+    prisma.order.findFirst.mockResolvedValueOnce(orderRow('CONFIRMED') as never).mockResolvedValue(orderRow('CANCELLED') as never);
     await service.cancel(admin, 'o-1');
-    expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }] });
+    // the paymentStatus read before the update must still hold (a payment settling mid-cancel gives 409)
+    expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'NONE' }] });
+  });
+
+  describe('web orders', () => {
+    const boCashier = authUser({ id: 'u-bo', username: 'bo.cashier', role: 'CASHIER', branchId: 'bo' }, ['order.read.branch', 'order.update', 'order.confirm']);
+    const conflict = async (promise: Promise<unknown>, code: string) => {
+      const err = await promise.catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpException);
+      expect((err as HttpException).getStatus()).toBe(409);
+      expect(((err as HttpException).getResponse() as { code: string }).code).toBe(code);
+    };
+
+    it('cancelling a paid web order refunds the captured attempt first, then cancels it as REFUNDED', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_1' });
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.cancel(admin, 'o-1');
+
+      expect(payments.refundForCancel).toHaveBeenCalledWith('o-1', 'Cancelled by ' + admin.username);
+      // the order was read in the caller's scope (and its status checked) before any money moved
+      expect(JSON.stringify(prisma.order.findFirst.mock.calls[0][0]?.where)).toContain('"id":"o-1"');
+      expect(prisma.order.findFirst.mock.invocationCallOrder[0]).toBeLessThan(payments.refundForCancel.mock.invocationCallOrder[0]);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(payments.refundForCancel.mock.invocationCallOrder[0]).toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0]);
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PAID' }] });
+      expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: admin.id });
+      expect(trail.addMetadata).toHaveBeenCalledWith(expect.objectContaining({ refundId: 'rf_1' }));
+    });
+
+    it('a failed refund leaves the order untouched', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      const refused = new HttpException({ statusCode: 502, error: 'Bad Gateway', code: 'REFUND_FAILED', message: 'Tap refused the refund.' }, 502);
+      payments.refundForCancel.mockRejectedValue(refused);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await expect(service.cancel(admin, 'o-1')).rejects.toBe(refused);
+      expect(payments.refundForCancel).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('an attempt that was already refunded is not refunded again', async () => {
+      const refunded = { ...webOrderRow().payments[0], refundId: 'rf_0' };
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ paymentStatus: 'REFUNDED', payments: [refunded] }) as never);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      await service.cancel(admin, 'o-1');
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+    });
+
+    it('who may cancel is unchanged: a cashier cannot cancel a confirmed paid web order, and no money moves', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_1' });
+      await expect(service.cancel(boCashier, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+    });
+
+    it('the cashier cancels a pending web order with a captured AMOUNT_MISMATCH attempt: refunded first, then CANCELLED as REFUNDED', async () => {
+      const mismatch = { ...webOrderRow().payments[0], failureCode: 'AMOUNT_MISMATCH' };
+      const pending = webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', paidAt: null, payments: [mismatch] });
+      prisma.order.findFirst.mockResolvedValueOnce(pending as never).mockResolvedValue(webOrderRow({ status: 'CANCELLED', paymentStatus: 'REFUNDED', paidAt: null }) as never);
+      prisma.payment.findFirst.mockResolvedValue(mismatch as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_2' });
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.cancel(boCashier, 'o-1');
+
+      expect(payments.refundForCancel).toHaveBeenCalledWith('o-1', 'Cancelled by bo.cashier');
+      expect(payments.refundForCancel.mock.invocationCallOrder[0]).toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0]);
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, { branchId: 'bo' }, { status: { in: ['PENDING'] } }, { paymentStatus: 'PENDING' }] });
+      expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: 'u-bo' });
+    });
+
+    it('an order already CANCELLED is locked before any refund (a duplicate capture after a refund is refunded in Tap)', async () => {
+      const duplicate = { ...webOrderRow().payments[0], id: 'pay-2', chargeId: 'chg_2', failureCode: 'DUPLICATE_CAPTURE' };
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'CANCELLED', paymentStatus: 'REFUNDED', payments: [duplicate] }) as never);
+      prisma.payment.findFirst.mockResolvedValue(duplicate as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_3' });
+      await expect(service.cancel(admin, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+    });
+
+    it('an order outside the branch is 404 and no money moves', async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_1' });
+      await expect(service.cancel(cashier, 'o-bo')).rejects.toBeInstanceOf(NotFoundException);
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+      // the read that found nothing was the caller's branch scope
+      const read = JSON.stringify(prisma.order.findFirst.mock.calls[0][0]?.where);
+      expect(read).toContain('"id":"o-bo"');
+      expect(read).toContain('"branchId":"gh"');
+    });
+
+    it('a showroom order is cancelled without asking the gateway', async () => {
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findFirst.mockResolvedValueOnce(orderRow('PENDING') as never).mockResolvedValue(orderRow('CANCELLED') as never);
+      await service.cancel(cashier, 'o-1');
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('a payment settling mid-cancel is not cancelled unrefunded: the update requires the paymentStatus read, and 409 without refunding', async () => {
+      const unpaid = webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', paidAt: null, payments: [] });
+      // read unpaid; by the time of the update settle has made it CONFIRMED/PAID
+      prisma.order.findFirst.mockResolvedValueOnce(unpaid as never).mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.cancel(admin, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({
+        AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PENDING' }],
+      });
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+    });
+
+    it('a refund that went through is recorded on the order even when the cancel then updates nothing', async () => {
+      const pending = webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', paidAt: null });
+      // settle committed between the read and the payment lookup: the card is captured, the order CONFIRMED/PAID
+      prisma.order.findFirst.mockResolvedValueOnce(pending as never).mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_9' });
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+      await expect(service.cancel(boCashier, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+      expect(payments.refundForCancel).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.order.updateMany.mock.calls[1][0]).toEqual({ where: { id: 'o-1' }, data: { paymentStatus: 'REFUNDED' } });
+      expect(trail.addMetadata).toHaveBeenCalledWith({ refundId: 'rf_9' });
+    });
+
+    it('a refund that went through is recorded on the order when the database fails on the cancel, and that error is rethrown', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      prisma.payment.findFirst.mockResolvedValue(webOrderRow().payments[0] as never);
+      payments.refundForCancel.mockResolvedValue({ refundId: 'rf_9' });
+      const down = new Error('connection terminated');
+      prisma.order.updateMany.mockRejectedValueOnce(down).mockResolvedValueOnce({ count: 1 });
+
+      await expect(service.cancel(admin, 'o-1')).rejects.toBe(down);
+      expect(prisma.order.updateMany.mock.calls[1][0]).toEqual({ where: { id: 'o-1' }, data: { paymentStatus: 'REFUNDED' } });
+    });
+
+    it('a retry after such a refund asks the gateway nothing and cancels the order as REFUNDED', async () => {
+      const refunded = { ...webOrderRow().payments[0], refundId: 'rf_9' };
+      prisma.order.findFirst.mockResolvedValueOnce(webOrderRow({ payments: [refunded] }) as never).mockResolvedValue(webOrderRow({ status: 'CANCELLED', paymentStatus: 'REFUNDED', payments: [refunded] }) as never);
+      // only the refunded paying attempt exists: a lookup for an unrefunded one finds nothing
+      prisma.payment.findFirst.mockImplementation(((args?: { where?: { refundId?: unknown } }) =>
+        Promise.resolve(args?.where?.refundId === null ? null : refunded)) as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.cancel(admin, 'o-1');
+
+      expect(payments.refundForCancel).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ AND: [{ id: 'o-1' }, {}, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'PAID' }] });
+      expect(call.data).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED', cancelledById: admin.id });
+      // the lookups used the paying-attempt rule (no DUPLICATE_CAPTURE, NULL-safe)
+      for (const [args] of prisma.payment.findFirst.mock.calls) {
+        expect(args?.where).toMatchObject({ orderId: 'o-1', status: 'CAPTURED', OR: [{ failureCode: null }, { failureCode: { not: 'DUPLICATE_CAPTURE' } }] });
+      }
+    });
+
+    it('cannot be edited by staff: 409 WEB_ORDER_READONLY', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', payments: [] }) as never);
+      prisma.$queryRaw.mockResolvedValue([{ status: 'PENDING' }] as never);
+      await conflict(service.update(boCashier, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
+      await conflict(service.update(admin, 'o-1', { items: [{ productId: 'p1', quantity: 1 }] }), 'WEB_ORDER_READONLY');
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it('the read-only check comes before the status check (a confirmed web order is WEB_ORDER_READONLY, not ORDER_NOT_PENDING)', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      await conflict(service.update(boCashier, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
+    });
+
+    it('cannot be confirmed by staff: 409 WEB_ORDER_UNPAID', async () => {
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', payments: [] }) as never);
+      await conflict(service.confirm(boCashier, 'o-1'), 'WEB_ORDER_UNPAID');
+      // either no update ran, or the one that ran excludes web orders (a real database would otherwise confirm it)
+      for (const [args] of prisma.order.updateMany.mock.calls) {
+        expect(JSON.stringify(args?.where)).toMatch(/"source":(?:"SHOWROOM"|\{"not":"WEB"\}|\{"in":\["SHOWROOM"\]\}|\{"notIn":\["WEB"\]\})/);
+      }
+      expect(trail.setChange).not.toHaveBeenCalledWith({ status: 'PENDING' }, { status: 'CONFIRMED' });
+    });
+
+    it('collect: one conditional update marks a paid web order handed over', async () => {
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ collectedAt: new Date() }) as never);
+      await service.collect(boCashier, 'o-1');
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ id: 'o-1', branchId: 'bo', source: 'WEB', paymentStatus: 'PAID', status: 'CONFIRMED', collectedAt: null });
+      expect(call.data).toEqual({ collectedAt: expect.any(Date) as Date, collectedById: 'u-bo' });
+      expect(trail.setEntity).toHaveBeenCalledWith('Order', 'o-1');
+    });
+
+    it('collect: 409 ORDER_NOT_COLLECTABLE for a showroom order, 404 outside the branch', async () => {
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      prisma.order.findFirst.mockResolvedValue(orderRow('CONFIRMED') as never);
+      await conflict(service.collect(cashier, 'o-1'), 'ORDER_NOT_COLLECTABLE');
+
+      prisma.order.findFirst.mockResolvedValue(null);
+      await expect(service.collect(cashier, 'o-bo')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('the detail carries the Odoo outbox state of a web order; a showroom order never asks', async () => {
+      const odoo = { status: 'PENDING' as const, saleOrderId: null, attempts: 1, lastError: 'boom', nextAttemptAt: '2026-10-18T10:06:00.000Z' };
+      odooOrders.statusFor.mockResolvedValue(odoo);
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      expect((await service.get(admin, 'o-1')).odoo).toEqual(odoo);
+      expect(odooOrders.statusFor).toHaveBeenCalledWith('o-1');
+
+      odooOrders.statusFor.mockClear();
+      prisma.order.findFirst.mockResolvedValue(orderRow('CONFIRMED') as never);
+      expect((await service.get(admin, 'o-1')).odoo).toBeNull();
+      expect(odooOrders.statusFor).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a test charge (live_mode false)', { id: 'chg_1', status: 'CAPTURED', live_mode: false }, true],
+      ['a live charge', { id: 'chg_1', status: 'CAPTURED', live_mode: true }, false],
+      ['a charge without live_mode', { id: 'chg_1', status: 'CAPTURED' }, false],
+      ['no stored charge', null, false],
+    ])('the detail says whether the payment was %s made in test mode', async (_label, rawLast, testMode) => {
+      odooOrders.statusFor.mockResolvedValue(null);
+      const row = webOrderRow();
+      prisma.order.findFirst.mockResolvedValue({ ...row, payments: [{ ...row.payments[0], rawLast }] } as never);
+      expect((await service.get(admin, 'o-1')).payment).toEqual({ chargeId: 'chg_1', status: 'CAPTURED', failureCode: null, refundId: null, testMode });
+    });
+
+    it('the detail reads the stored charge of the newest attempt', () => {
+      expect(ORDER_DETAIL_SELECT.payments.select).toMatchObject({ rawLast: true });
+    });
+
+    it('retryOdoo: queues the row again and answers the detail; 404 outside the read scope, before touching the outbox', async () => {
+      const finance = authUser({ id: 'u-fin', username: 'finance', role: 'FINANCE', branchId: null }, ['order.read.all', 'order.odoo.retry']);
+      odooOrders.statusFor.mockResolvedValueOnce({ status: 'FAILED', saleOrderId: null, attempts: 1, lastError: 'PRODUCT_NOT_IN_ODOO: Floor Mats', nextAttemptAt: null });
+      odooOrders.statusFor.mockResolvedValueOnce({ status: 'PENDING', saleOrderId: null, attempts: 1, lastError: null, nextAttemptAt: '2026-10-18T10:06:00.000Z' });
+      prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+      const after = await service.retryOdoo(finance, 'o-1');
+      expect(odooOrders.retry).toHaveBeenCalledWith('o-1');
+      expect(after.odoo).toMatchObject({ status: 'PENDING', lastError: null });
+      expect(trail.setEntity).toHaveBeenCalledWith('Order', 'o-1');
+      expect(trail.setChange).toHaveBeenCalledWith({ odooStatus: 'FAILED' }, { odooStatus: 'PENDING' });
+
+      odooOrders.retry.mockClear();
+      prisma.order.findFirst.mockResolvedValue(null);
+      await expect(service.retryOdoo(cashier, 'o-bo')).rejects.toBeInstanceOf(NotFoundException);
+      expect(odooOrders.retry).not.toHaveBeenCalled();
+    });
   });
 });

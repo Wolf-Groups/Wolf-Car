@@ -38,6 +38,34 @@ enum SessionAudience {
   SHOWROOM
 }
 
+/// Where an order was placed: the branch's showroom screen, or the website.
+enum OrderSource {
+  SHOWROOM
+  WEB
+}
+
+/// Online payment of an order. Showroom orders stay NONE (paid at the till).
+enum PaymentStatus {
+  NONE
+  PENDING
+  PAID
+  REFUNDED
+}
+
+/// One card attempt at Tap.
+enum PaymentAttemptStatus {
+  INITIATED
+  CAPTURED
+  FAILED
+}
+
+/// A paid web order on its way to Odoo.
+enum OutboxStatus {
+  PENDING
+  DONE
+  FAILED
+}
+
 enum AuditOutcome {
   SUCCESS
   FAILURE
@@ -127,6 +155,7 @@ model User {
   ordersCreated         Order[]                  @relation("OrderCreatedBy")
   ordersConfirmed       Order[]                  @relation("OrderConfirmedBy")
   ordersCancelled       Order[]                  @relation("OrderCancelledBy")
+  ordersCollected       Order[]                  @relation("OrderCollectedBy")
   ppfBookingsCreated    PpfBooking[]             @relation("PpfBookingCreatedBy")
   ppfBookingsUpdated    PpfBooking[]             @relation("PpfBookingUpdatedBy")
   ppfBookingsCancelled  PpfBooking[]             @relation("PpfBookingCancelledBy")
@@ -402,35 +431,136 @@ model PriceHistory {
 }
 
 model Order {
-  id             String      @id @default(uuid()) @db.Uuid
-  branchId       String      @map("branch_id") @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  branchId       String        @map("branch_id") @db.Uuid
   /// Per-branch sequence number; `code` is "<branch code>-<number padded to 6>".
   number         Int
-  code           String      @unique @db.VarChar(16)
-  customerName   String      @map("customer_name") @db.VarChar(80)
-  status         OrderStatus @default(PENDING)
-  total          Decimal     @db.Decimal(12, 2)
-  currency       String      @default("QAR") @db.Char(3)
-  createdById    String      @map("created_by_id") @db.Uuid
-  confirmedById  String?     @map("confirmed_by_id") @db.Uuid
-  confirmedAt    DateTime?   @map("confirmed_at") @db.Timestamptz(3)
-  cancelledById  String?     @map("cancelled_by_id") @db.Uuid
-  cancelledAt    DateTime?   @map("cancelled_at") @db.Timestamptz(3)
-  idempotencyKey String?     @map("idempotency_key") @db.VarChar(80)
-  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  code           String        @unique @db.VarChar(16)
+  customerName   String        @map("customer_name") @db.VarChar(80)
+  status         OrderStatus   @default(PENDING)
+  total          Decimal       @db.Decimal(12, 2)
+  currency       String        @default("QAR") @db.Char(3)
+  createdById    String        @map("created_by_id") @db.Uuid
+  confirmedById  String?       @map("confirmed_by_id") @db.Uuid
+  confirmedAt    DateTime?     @map("confirmed_at") @db.Timestamptz(3)
+  cancelledById  String?       @map("cancelled_by_id") @db.Uuid
+  cancelledAt    DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  idempotencyKey String?       @map("idempotency_key") @db.VarChar(80)
+  /// SHOWROOM (default) or WEB. Web orders are created by the system.web user
+  /// for the website customer below and are confirmed by payment, not by staff.
+  source         OrderSource   @default(SHOWROOM)
+  customerId     String?       @map("customer_id") @db.Uuid
+  /// Snapshots of the website customer's contact details at order time.
+  customerPhone  String?       @map("customer_phone") @db.VarChar(20)
+  customerEmail  String?       @map("customer_email") @db.VarChar(254)
+  paymentStatus  PaymentStatus @default(NONE) @map("payment_status")
+  /// When Tap captured the card.
+  paidAt         DateTime?     @map("paid_at") @db.Timestamptz(3)
+  /// When an unpaid web order is cancelled by the expiry sweep (created + CHECKOUT_TTL_MINUTES).
+  expiresAt      DateTime?     @map("expires_at") @db.Timestamptz(3)
+  /// When the cashier handed a paid web order over, and who.
+  collectedById  String?       @map("collected_by_id") @db.Uuid
+  collectedAt    DateTime?     @map("collected_at") @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
   createdBy   User        @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   confirmedBy User?       @relation("OrderConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
   cancelledBy User?       @relation("OrderCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  collectedBy User?       @relation("OrderCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items       OrderItem[]
+  payments    Payment[]
+  odooOutbox  OdooOutbox?
 
   @@unique([branchId, number])
   @@unique([createdById, idempotencyKey])
   @@index([branchId, status, createdAt])
   @@index([createdAt])
+  @@index([customerId])
+  @@index([source, paymentStatus, expiresAt])
   @@map("orders")
+}
+
+/// A website customer, separate from staff accounts. Identified by phone;
+/// signs in with a one-time code. Name and email are what was last typed at checkout.
+model Customer {
+  id             String    @id @default(uuid()) @db.Uuid
+  /// E.164, e.g. "+97455123456".
+  phone          String    @unique @db.VarChar(20)
+  name           String?   @db.VarChar(80)
+  email          String?   @db.VarChar(254)
+  /// Bumped by "sign out everywhere"; cookies carrying an older version stop working.
+  sessionVersion Int       @default(1) @map("session_version")
+  lastLoginAt    DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  orders Order[]
+
+  @@map("customers")
+}
+
+/// One-time sign-in codes. Only the hash is stored; a row dies when consumed,
+/// expired, or guessed wrong OTP_MAX_ATTEMPTS times.
+model CustomerOtp {
+  id         String    @id @default(uuid()) @db.Uuid
+  phone      String    @db.VarChar(20)
+  codeHash   String    @map("code_hash") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([phone, createdAt])
+  @@map("customer_otps")
+}
+
+/// One card attempt at the payment provider. An order may have several
+/// (declined, then paid). The charge object Tap last sent is kept as JSON;
+/// it never holds a full card number.
+model Payment {
+  id          String               @id @default(uuid()) @db.Uuid
+  orderId     String               @map("order_id") @db.Uuid
+  provider    String               @default("tap") @db.VarChar(16)
+  /// Tap's charge id ("chg_…"); null until Tap answered.
+  chargeId    String?              @unique @map("charge_id") @db.VarChar(64)
+  status      PaymentAttemptStatus @default(INITIATED)
+  amount      Decimal              @db.Decimal(12, 2)
+  currency    String               @default("QAR") @db.Char(3)
+  /// Tap's response code, or AMOUNT_MISMATCH when a captured charge did not match the order.
+  failureCode String?              @map("failure_code") @db.VarChar(64)
+  rawLast     Json?                @map("raw_last")
+  refundId    String?              @map("refund_id") @db.VarChar(64)
+  refundedAt  DateTime?            @map("refunded_at") @db.Timestamptz(3)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("payments")
+}
+
+/// Paid web orders waiting to become Odoo sale orders. Processed by a timer
+/// with backoff; never in the request path.
+model OdooOutbox {
+  id              String       @id @default(uuid()) @db.Uuid
+  orderId         String       @unique @map("order_id") @db.Uuid
+  status          OutboxStatus @default(PENDING)
+  attempts        Int          @default(0)
+  nextAttemptAt   DateTime     @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lastError       String?      @map("last_error") @db.VarChar(600)
+  odooPartnerId   Int?         @map("odoo_partner_id")
+  odooSaleOrderId Int?         @map("odoo_sale_order_id")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("odoo_outbox")
 }
 
 model OrderItem {

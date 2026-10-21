@@ -54,6 +54,9 @@ services:
       dockerfile: Dockerfile
       args:
         API_INTERNAL_URL: http://api:4000
+        # Tap's public key, baked into the website at build time (deploy/prod.env).
+        # Empty: card checkout stays off and the basket offers WhatsApp only.
+        NEXT_PUBLIC_TAP_PUBLIC_KEY: ${NEXT_PUBLIC_TAP_PUBLIC_KEY:-}
     environment:
       API_INTERNAL_URL: http://api:4000
     ports:

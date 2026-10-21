@@ -35,6 +35,7 @@
     "order_cancel": "Cancel pending orders",
     "order_confirm": "Confirm orders",
     "order_receipt_download": "Download receipts",
+    "order_odoo_retry": "Resend failed orders to Odoo",
     "booking_ppf_read": "View PPF bookings",
     "booking_ppf_manage": "Manage PPF bookings",
     "booking_general_manage": "Manage general reservations",

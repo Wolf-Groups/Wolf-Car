@@ -18,6 +18,12 @@ export interface ReceiptData {
   branch: { name: string; nameAr: string };
   cashier: string | null;
   items: { productName: string; barcode?: string | null; quantity: number; unitPrice: string; lineTotal: string }[];
+  /**
+   * A web order: its parts are never rung up at the till, so no scannable
+   * bars. When the card paid it, the receipt says so with the paid date and
+   * the end of Tap's charge id. Absent for showroom orders.
+   */
+  online?: { paid: boolean; paidAt: Date | null; chargeId: string | null } | null;
 }
 
 /**
@@ -51,6 +57,9 @@ const TEXT = {
     grand: 'Grand total',
     thanks: 'Thank you for choosing Wolf Car.',
     note: 'Prices include all applicable charges. Keep this receipt for your records.',
+    paidOnline: 'Paid online by card — nothing to collect at the till',
+    paidOn: 'Paid',
+    cardPayment: 'Card payment',
   },
   ar: {
     title: 'إيصال',
@@ -67,6 +76,9 @@ const TEXT = {
     grand: 'الإجمالي الكلي',
     thanks: 'شكرًا لاختياركم وولف كار.',
     note: 'الأسعار شاملة لجميع الرسوم. يُرجى الاحتفاظ بهذا الإيصال.',
+    paidOnline: 'مدفوع أونلاين بالبطاقة — لا يُحصَّل أي مبلغ عند الكاشير',
+    paidOn: 'تاريخ الدفع',
+    cardPayment: 'عملية الدفع',
   },
 } as const;
 
@@ -103,11 +115,22 @@ export function renderReceiptHtml(data: ReceiptData, locale: ReceiptLocale, asse
   const LATIN = 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD';
 
 
+  // a web order is never rung up at the till: no bars to scan
+  const scannable = !data.online;
+  const online = data.online?.paid ? data.online : null;
+  const paidLine = online
+    ? `<div class="paid"><b>${e(t.paidOnline)}</b><span>${
+        online.paidAt ? `${e(t.paidOn)}: <bdi>${e(formatDate(online.paidAt, locale))}</bdi>` : ''
+      }${online.paidAt && online.chargeId ? ' · ' : ''}${
+        online.chargeId ? `${e(t.cardPayment)}: <bdi dir="ltr">…${e(online.chargeId.slice(-8))}</bdi>` : ''
+      }</span></div>`
+    : '';
+
   const rows = data.items
     .map(
       (i, n) => `<tr>
         <td class="n">${n + 1}</td>
-        <td class="name"><bdi>${e(i.productName)}</bdi>${barcodeCell(i.barcode)}</td>
+        <td class="name"><bdi>${e(i.productName)}</bdi>${scannable ? barcodeCell(i.barcode) : ''}</td>
         <td class="num">${i.quantity}</td>
         <td class="num">${money(i.unitPrice)}</td>
         <td class="num strong">${money(i.lineTotal)}</td>
@@ -152,6 +175,9 @@ th.num { text-align: end; }
 .total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; padding: 10px 12px; background: #f5f4f1; border-radius: 10px; }
 .total span { font-weight: 700; }
 .total strong { font-size: 14pt; }
+.paid { margin: 0 0 14px; padding: 10px 12px; border: 2px solid #1f7a3d; border-radius: 10px; color: #1f7a3d; }
+.paid b { display: block; font-size: 11.5pt; }
+.paid span { color: #161616; font-size: 9.5pt; }
 footer { margin-top: 18px; color: #6e6e6e; font-size: 8.5pt; text-align: center; }
 footer b { display: block; color: #161616; font-size: 9.5pt; }
 </style>
@@ -169,6 +195,7 @@ footer b { display: block; color: #161616; font-size: 9.5pt; }
   <dt>${e(t.customer)}</dt><dd><bdi>${e(data.customerName)}</bdi></dd>
   ${data.cashier ? `<dt>${e(t.cashier)}</dt><dd><bdi>${e(data.cashier)}</bdi></dd>` : ''}
 </dl>
+${paidLine}
 <table>
   <thead><tr><th></th><th>${e(t.item)}</th><th class="num">${e(t.qty)}</th><th class="num">${e(t.unit)}</th><th class="num">${e(t.line)}</th></tr></thead>
   <tbody>${rows}</tbody>

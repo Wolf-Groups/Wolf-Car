@@ -7,7 +7,7 @@ import { AuthFailedException } from '../common/errors';
 import type { PrismaService } from '../prisma/prisma.service';
 import { JWT_ISSUER, TokenService } from './token.service';
 
-const config = new ConfigService({ JWT_ACCESS_TTL_SECONDS: 900, REFRESH_TTL_DAYS: 7, SHOWROOM_SESSION_TTL_HOURS: 16 });
+const config = new ConfigService({ JWT_ACCESS_TTL_SECONDS: 900, REFRESH_TTL_DAYS: 7, SHOWROOM_SESSION_TTL_HOURS: 16, CUSTOMER_SESSION_TTL_DAYS: 30 });
 const jwt = new JwtService({
   secret: 'unit-test-secret-unit-test-secret-1234',
   signOptions: { issuer: JWT_ISSUER, algorithm: 'HS256' },
@@ -116,6 +116,38 @@ describe('TokenService', () => {
       const { accessToken } = await service.signAccess({ id: 'u-1', role: 'SUPER_ADMIN', branchId: null }, 's-1', 'DASHBOARD');
       expect(await service.verifySlots(accessToken)).toBeNull();
       expect(await service.verifySlots('not-a-token')).toBeNull();
+    });
+  });
+
+  describe('website customer token', () => {
+    it('carries the customer id and session version and lasts CUSTOMER_SESSION_TTL_DAYS', async () => {
+      const before = Date.now();
+      const { token, expiresAt } = await service.signCustomer('c-1', 3);
+      await expect(service.verifyCustomer(token)).resolves.toMatchObject({ sub: 'c-1', ver: 3 });
+      expect(expiresAt.getTime() - before).toBeGreaterThanOrEqual(30 * 86_400_000 - 2_000);
+      expect(expiresAt.getTime() - before).toBeLessThanOrEqual(30 * 86_400_000 + 2_000);
+    });
+
+    it('reads the lifetime from CUSTOMER_SESSION_TTL_DAYS', async () => {
+      const weekConfig = new ConfigService({ JWT_ACCESS_TTL_SECONDS: 900, REFRESH_TTL_DAYS: 7, SHOWROOM_SESSION_TTL_HOURS: 16, CUSTOMER_SESSION_TTL_DAYS: 7 });
+      const week = new TokenService(jwt, prisma, weekConfig as never, activity);
+      const before = Date.now();
+      const { token, expiresAt } = await week.signCustomer('c-1', 1);
+      expect(expiresAt.getTime() - before).toBeGreaterThanOrEqual(7 * 86_400_000 - 2_000);
+      expect(expiresAt.getTime() - before).toBeLessThanOrEqual(7 * 86_400_000 + 2_000);
+      await expect(week.verifyCustomer(token)).resolves.toMatchObject({ sub: 'c-1', ver: 1 });
+    });
+
+    it('opens no staff route, and no staff token opens a customer route', async () => {
+      const { token } = await service.signCustomer('c-1', 1);
+      await expect(service.verifyAccess(token)).rejects.toThrow();
+      await expect(service.verifyChallenge(token)).rejects.toBeInstanceOf(AuthFailedException);
+      const { accessToken } = await service.signAccess({ id: 'u-1', role: 'SUPER_ADMIN', branchId: null }, 's-1', 'DASHBOARD');
+      await expect(service.verifyCustomer(accessToken)).rejects.toBeInstanceOf(AuthFailedException);
+      await expect(service.verifyCustomer('not-a-token')).rejects.toBeInstanceOf(AuthFailedException);
+      await expect(service.verifyCustomer('not-a-token')).rejects.toMatchObject({ response: { code: 'SESSION_EXPIRED' } });
+      const { token: slots } = await service.signSlots(1);
+      await expect(service.verifyCustomer(slots)).rejects.toBeInstanceOf(AuthFailedException);
     });
   });
 });
