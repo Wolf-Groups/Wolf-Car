@@ -112,7 +112,7 @@ const pathParts = (path: string): string[] =>
 export function skipReason(v: OdooVariant): string | null {
   if (!v.active) return 'archived';
   if (!v.sale_ok) return 'not for sale';
-  if (v.type === 'service') return 'service';
+  // a service (a software install, say) is sold like a part once it has a real price
   if (v.categ_id && pathParts(v.categ_id[1]).some((part) => part.toLowerCase() === 'expenses')) return 'expenses category';
   // 0 and 1 are placeholders in Odoo, not prices
   if (!Number.isFinite(v.lst_price) || v.lst_price <= 1) return 'price is 0 or 1';
