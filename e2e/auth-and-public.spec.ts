@@ -48,7 +48,7 @@ test.describe("public catalog", () => {
     await page.goto("/en");
     const footerLinks = page.locator("footer nav");
     await expect(footerLinks.getByRole("link", { name: "Product catalog" })).toHaveAttribute("href", "/en/products");
-    await expect(footerLinks.getByRole("link", { name: "Staff login" })).toHaveAttribute("href", "/en/login");
+    await expect(footerLinks.getByRole("link", { name: "Staff login" })).toHaveCount(0);
 
     await footerLinks.getByRole("link", { name: "Product catalog" }).click();
     await expect(page).toHaveURL(/\/en\/products$/);

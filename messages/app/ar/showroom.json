@@ -2,6 +2,7 @@
   "title": "المعرض",
   "branchLabel": "{branch}",
   "add": "إضافة",
+  "unavailable": "غير متوفر",
   "addNamed": "إضافة {name}",
   "variant": "اللون",
   "viewImage": "تكبير صورة {name}",

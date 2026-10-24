@@ -1,6 +1,7 @@
 import {
   arabicCategoryName,
   categoryName,
+  freeStock,
   legacyCategoryKey,
   parentCategoryOdooId,
   skipReason,
@@ -21,6 +22,7 @@ const variant = (over: Partial<OdooVariant> = {}): OdooVariant => ({
   active: true,
   sale_ok: true,
   type: 'consu',
+  is_storable: true,
   categ_id: [29, 'Car / CAR ACCESSORIES'],
   write_date: '2026-08-12 07:27:15',
   ...over,
@@ -48,8 +50,15 @@ describe('skipReason', () => {
     expect(skipReason(variant({ lst_price: 99_999_999_999 }))).toBe('price out of range');
   });
 
-  it('rejects services, archived and not-for-sale products', () => {
-    expect(skipReason(variant({ type: 'service' }))).toBe('service');
+  it('accepts a priced service, such as a software install', () => {
+    expect(skipReason(variant({ type: 'service', is_storable: false, categ_id: [41, 'Software'] }))).toBeNull();
+  });
+
+  it('rejects a service without a real price, like any other product', () => {
+    expect(skipReason(variant({ type: 'service', is_storable: false, lst_price: 0 }))).toBe('price is 0 or 1');
+  });
+
+  it('rejects archived and not-for-sale products', () => {
     expect(skipReason(variant({ active: false }))).toBe('archived');
     expect(skipReason(variant({ sale_ok: false }))).toBe('not for sale');
   });
@@ -208,5 +217,17 @@ describe('arabicCategoryName', () => {
 
   it('returns null for a name it does not know', () => {
     expect(arabicCategoryName('THABT')).toBeNull();
+  });
+});
+
+describe('freeStock', () => {
+  const quant = (id: number, quantity: number, reserved_quantity = 0) => ({ product_id: [id, 'x'] as [number, string], quantity, reserved_quantity });
+
+  it('sums the locations of a variant and takes off what is reserved', () => {
+    expect(freeStock([quant(7, 10), quant(7, 5, 3), quant(8, 2)])).toEqual(new Map([[7, 12], [8, 2]]));
+  });
+
+  it('keeps a negative count, as Odoo has it, and rounds part units down', () => {
+    expect(freeStock([quant(7, -2), quant(8, 2.5)])).toEqual(new Map([[7, -2], [8, 2]]));
   });
 });

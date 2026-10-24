@@ -6,6 +6,7 @@ import { Prisma } from '../generated/prisma/client';
 import { ORDER_DETAIL_SELECT, orderAuditView, orderDetail, type OrderDetail } from '../orders/order.view';
 import { PrismaService } from '../prisma/prisma.service';
 import { branchBarcode, branchBarcodeBases } from '../products/branch-barcodes';
+import { IN_STOCK, inStock } from '../products/stock';
 import { countCards, VARIANT_SELECT, variantView } from '../products/variant.view';
 import { ServicesService } from '../services/services.service';
 import { imageUrl } from '../uploads/image-processing';
@@ -40,6 +41,7 @@ export class ShowroomService {
             price: true,
             imageKey: true,
             categoryId: true,
+            odooStock: true,
             ...VARIANT_SELECT,
           },
         },
@@ -66,6 +68,8 @@ export class ShowroomService {
       imageUrl: imageUrl(p.imageKey),
       thumbUrl: imageUrl(p.imageKey, 'sm'),
       ...variantView(p),
+      /** false when Odoo has none left: shown as "not available" and refused when ordered */
+      available: inStock(p.odooStock),
     }));
 
     const listed = new Map<string, (typeof rows)[number]['product'][]>();
@@ -126,8 +130,12 @@ export class ShowroomService {
             id: { in: dto.items.map((i) => i.productId) },
             price: { not: null },
             isActive: true,
-            // a part must be on this branch's list; a service is offered at every branch
-            OR: [{ branchPositions: { some: { branchId: branch.id } } }, { service: { isActive: true } }],
+            AND: [
+              // a part must be on this branch's list; a service is offered at every branch
+              { OR: [{ branchPositions: { some: { branchId: branch.id } } }, { service: { isActive: true } }] },
+              // Odoo had none left at the last sync
+              IN_STOCK,
+            ],
           },
           select: { id: true, name: true, price: true },
         });

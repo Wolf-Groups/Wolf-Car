@@ -67,6 +67,24 @@ describe("products page permissions", () => {
     expect(screen.getAllByRole("button", { name: /^Price history of / })).toHaveLength(2);
   });
 
+  it("shows how many of an Odoo product are in stock, and nothing for one Odoo does not count", async () => {
+    server.use(
+      http.get("/api/products", () =>
+        HttpResponse.json([
+          { ...brake, fromOdoo: true, stock: 12 },
+          { ...oil, fromOdoo: true, stock: -1 },
+          { ...mats, fromOdoo: true, stock: null },
+        ]),
+      ),
+    );
+    renderWithApp(<ProductsPage />, { user: finance() });
+
+    expect(await screen.findByText("In stock: 12")).toBeInTheDocument();
+    const list = within(screen.getByRole("list", { name: "Products" }));
+    expect(list.getAllByText(/^(In stock|Out of stock)/)).toHaveLength(2);
+    expect(list.getByText("Out of stock")).toBeInTheDocument();
+  });
+
   it("a Branch Manager can add, edit and reorder but not price", async () => {
     server.use(http.get("/api/products", () => HttpResponse.json([brake, oil])));
     renderWithApp(<ProductsPage />, { user: manager() });
@@ -94,6 +112,33 @@ describe("products page permissions", () => {
     expect(seen[0]).toBe("?price=unpriced");
     expect(screen.getByRole("button", { name: "Awaiting price" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /^Reorder / })).not.toBeInTheDocument();
+  });
+});
+
+describe("car and stock filters", () => {
+  it("asks the API for one car's products and for what is out of stock, and clears both", async () => {
+    const seen: string[] = [];
+    server.use(
+      http.get("/api/public/categories", () =>
+        HttpResponse.json([{ id: "cat-thabt", name: "ثابت", nameEn: "THABT", carModel: null, imageUrl: null, thumbUrl: null, count: 175 }]),
+      ),
+      http.get("/api/products", ({ request }) => {
+        const search = new URL(request.url).search;
+        seen.push(search);
+        return HttpResponse.json(search === "" ? [brake, oil] : []);
+      }),
+    );
+    const { user } = renderWithApp(<ProductsPage />, { user: finance() });
+    expect(await screen.findByText("Brake pads")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Car or line" }));
+    await user.click(await screen.findByRole("option", { name: "THABT (175)" }));
+    await user.click(screen.getByRole("button", { name: "Out of stock" }));
+
+    await waitFor(() => expect(seen.at(-1)).toBe("?categoryId=cat-thabt&stock=out"));
+    await user.click(await screen.findByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(seen.at(-1)).toBe(""));
+    expect(screen.getByRole("combobox", { name: "Car or line" })).toHaveTextContent("All cars and lines");
   });
 });
 

@@ -23,7 +23,7 @@ at random, and finds the same name, barcode and price as in Odoo.
 | Old products | Kept in the database, switched off. Past orders keep pointing at them. |
 | Source | Odoo 19 Enterprise. Test copy: `https://erp-test.wolf-groups.com`, database `wolf_group_test_db`. |
 | Price 0 or 1 | **Not imported at all.** These are placeholders in Odoo. |
-| Services and expenses | Not imported. Only sellable goods. |
+| Services and expenses | Expenses are not imported. Services are, once they have a real price (owner, 2026-10-24: the Software category showed one product while Odoo held all of them as services). |
 | Where it runs first | Local database only. Production is not touched by this work. |
 | How it runs | A command run by hand. No scheduled or automatic sync yet. |
 | Direction | Read only. The app never writes to Odoo. |
@@ -59,8 +59,7 @@ and the final price live there.
 
 A variant is imported when all of these hold:
 
-- it is active and `sale_ok`
-- its type is goods, not service
+- it is active and `sale_ok` (goods and services alike)
 - its category is not `Expenses`
 - its sales price (`lst_price`) is greater than 1
 
@@ -139,8 +138,8 @@ any other product.
 
 ## Testing
 
-- Unit tests for `odoo-rows.ts`: the qualifying rules (price 0, 1, 1.01; service;
-  Expenses; not `sale_ok`), the name choice, the category name.
+- Unit tests for `odoo-rows.ts`: the qualifying rules (price 0, 1, 1.01; a priced
+  service; Expenses; not `sale_ok`), the name choice, the category name.
 - Unit test for `odoo-client.ts` against a stubbed `fetch`.
 - e2e: a hidden product is absent from the showroom and public catalogue,
   cannot be ordered, and is still shown on an existing order.

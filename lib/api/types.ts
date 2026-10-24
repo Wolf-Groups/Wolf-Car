@@ -1,3 +1,4 @@
+import type { StockInfo } from "@/lib/stock";
 import type { VariantInfo } from "@/lib/variants";
 import type { SiteDevice, SiteSource } from "@/shared/analytics";
 import type { OrderStatusName, PermissionGroup, PermissionKey, RoleName } from "@/shared/permissions";
@@ -60,6 +61,8 @@ export interface Product {
   priceUpdatedAt: string | null;
   /** name, barcode, photo and price come from Odoo and are not edited here */
   fromOdoo?: boolean;
+  /** units free to sell in Odoo at the last sync (can be negative); null when Odoo keeps no stock for it */
+  stock?: number | null;
   /** also listed under the website's "Quick service" tab */
   quickService?: boolean;
   imageUrl: string;
@@ -79,7 +82,7 @@ export interface PriceChange {
   changedBy: PersonRef & { role: RoleName };
 }
 
-export interface ShowroomProduct extends VariantInfo {
+export interface ShowroomProduct extends VariantInfo, StockInfo {
   id: string;
   name: string;
   description: string | null;
@@ -339,7 +342,7 @@ export interface ActivityEntry {
   requestId: string | null;
 }
 
-export interface PublicProduct extends VariantInfo {
+export interface PublicProduct extends VariantInfo, StockInfo {
   id: string;
   name: string;
   description: string | null;

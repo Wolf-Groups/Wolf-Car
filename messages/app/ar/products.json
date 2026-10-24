@@ -55,6 +55,11 @@
     "notSet": "لم يُحدَّد بعد"
   },
   "listLabel": "المنتجات",
+  "categoryFilterLabel": "السيارة أو الفئة",
+  "allCategories": "كل السيارات والفئات",
+  "stockFilterLabel": "المخزون",
+  "stockIn": "متوفر",
+  "stockOut": "نفد",
   "priceFilterLabel": "السعر",
   "orderLabel": "ترتيب القائمة",
   "savingOrder": "جارٍ حفظ الترتيب الجديد…",
@@ -68,6 +73,10 @@
     "failed": "فشلت آخر مزامنة مع أودو: {error}",
     "keyExpiring": "مفتاح الربط مع أودو ينتهي {days, plural, one {غدًا} two {خلال يومين} few {خلال # أيام} other {خلال # يومًا}} ({date}). أنشئ مفتاحًا جديدًا في أودو قبل هذا التاريخ وإلا ستتوقف المزامنة.",
     "fromOdoo": "من أودو"
+  },
+  "stock": {
+    "available": "متوفر: {n, number}",
+    "out": "نفد"
   },
   "historyNamed": "سجل أسعار {name}",
   "dnd": {

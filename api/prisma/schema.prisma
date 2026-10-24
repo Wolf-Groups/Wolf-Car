@@ -321,6 +321,10 @@ model Product {
   variantLabel   String?   @map("variant_label") @db.VarChar(60)
   /// "#980606" for a colour variant, to draw its swatch.
   variantColor   String?   @map("variant_color") @db.VarChar(7)
+  /// Units free to sell across Odoo's internal stock locations (on hand minus
+  /// reserved), refreshed by every sync. Can be negative when Odoo is. Null
+  /// for a product Odoo does not count, and for every product not from Odoo.
+  odooStock      Int?      @map("odoo_stock")
   /// UUID of the processed image files in UPLOAD_DIR (<key>.webp and <key>-sm.webp).
   imageKey       String    @map("image_key") @db.Uuid
   /// Set on the hidden rows that hold one price of a service (see Service).

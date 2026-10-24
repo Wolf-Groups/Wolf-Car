@@ -72,3 +72,11 @@ describe("filterProducts", () => {
     expect(ids(ALL)).toEqual(["mat", "clip", "rack"]);
   });
 });
+
+describe("out of stock", () => {
+  it("comes last under every sort, the rest keeping their order", () => {
+    const gone = { ...MAT, available: false };
+    expect(ids(filterProducts([gone, CLIP, RACK], NONE))).toEqual(["clip", "rack", "mat"]);
+    expect(ids(filterProducts([gone, CLIP, RACK], { ...NONE, sort: "priceDesc" }))).toEqual(["rack", "clip", "mat"]);
+  });
+});

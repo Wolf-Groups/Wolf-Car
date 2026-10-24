@@ -49,7 +49,7 @@ async function main(): Promise<void> {
       console.log(`  - ${n} ${reason}`);
     if (dryRun) console.log('\nDry run — nothing was written. It would:');
     console.log(
-      `Products: ${s.created} created, ${s.updated} updated (${s.repriced} repriced), ${s.unchanged} unchanged`,
+      `Products: ${s.created} created, ${s.updated} updated (${s.repriced} repriced), ${s.unchanged} unchanged, ${s.restocked} restocked`,
     );
     console.log(`Images fetched from Odoo: ${s.imagesFetched}`);
     console.log(`Switched off ${s.switchedOff} products Odoo no longer offers`);

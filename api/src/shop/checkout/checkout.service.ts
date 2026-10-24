@@ -5,6 +5,7 @@ import { decimal } from '../../common/money';
 import type { Env } from '../../config/env';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IN_STOCK } from '../../products/stock';
 import type { CustomerPrincipal } from '../customers/customers.service';
 import type { CreateWebOrderDto } from '../dto/shop.dto';
 import { PAYMENT_GATEWAY, type PaymentGateway } from '../payments/payment-gateway';
@@ -48,7 +49,7 @@ export class CheckoutService {
     return branch;
   }
 
-  /** 400 PRODUCT_UNAVAILABLE { productIds } for lines that are inactive, unpriced, service rows or off the branch list. Replays by (customer, Idempotency-Key). */
+  /** 400 PRODUCT_UNAVAILABLE { productIds } for lines that are inactive, unpriced, out of stock, service rows or off the branch list. Replays by (customer, Idempotency-Key). */
   async createOrder(customer: CustomerPrincipal, dto: CreateWebOrderDto, idempotencyKey: string | undefined): Promise<{ order: WebOrderView; replayed: boolean }> {
     const branch = await this.pickupBranch();
 
@@ -68,6 +69,8 @@ export class CheckoutService {
             // the hidden rows that price a service are not sold online
             serviceId: null,
             branchPositions: { some: { branchId: branch.id } },
+            // Odoo had none left at the last sync
+            ...IN_STOCK,
           },
           select: { id: true, name: true, price: true },
         });

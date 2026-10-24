@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { syncOdooCatalogue, type OdooReader } from '../src/odoo/odoo-sync';
-import type { OdooVariant } from '../src/odoo/odoo-rows';
+import type { OdooQuant, OdooVariant } from '../src/odoo/odoo-rows';
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, login } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
@@ -13,10 +13,12 @@ class FakeOdoo implements OdooReader {
   variants: OdooVariant[] = [];
   templateDates = new Map<number, string>();
   images = new Map<number, string>();
+  quants: OdooQuant[] = [];
   imageReads = 0;
 
   searchRead<T>(model: string): Promise<T[]> {
     if (model === 'product.product') return Promise.resolve(this.variants.filter((v) => v.active) as T[]);
+    if (model === 'stock.quant') return Promise.resolve(this.quants as T[]);
     if (model === 'product.template') return Promise.resolve([...this.templateDates].map(([id, write_date]) => ({ id, write_date })) as T[]);
     if (model === 'product.category') {
       return Promise.resolve([
@@ -48,6 +50,7 @@ const variant = (over: Partial<OdooVariant>): OdooVariant => ({
   active: true,
   sale_ok: true,
   type: 'consu',
+  is_storable: true,
   categ_id: [23, 'Car / E2EBRAND / E2EMODEL'],
   write_date: '2026-10-01 08:00:00',
   ...over,
@@ -128,6 +131,22 @@ describe('Odoo catalogue sync (e2e)', () => {
     ]);
   });
 
+  it('keeps the stock up to date without counting the product as changed', async () => {
+    expect((await byOdooId(1)).odooStock).toBe(0);
+    const quant = (id: number, quantity: number, reserved_quantity = 0): OdooQuant => ({ product_id: [id, 'x'], quantity, reserved_quantity });
+    // two shelves, three units promised to a customer
+    odoo.quants = [quant(1, 10), quant(1, 5, 3), quant(3, 2)];
+    odoo.variants[3] = { ...odoo.variants[3], is_storable: false };
+
+    expect(await run()).toMatchObject({ updated: 0, restocked: 3 });
+    expect((await byOdooId(1)).odooStock).toBe(12);
+    expect((await byOdooId(2)).odooStock).toBe(0);
+    expect((await byOdooId(3)).odooStock).toBe(2);
+    // Odoo keeps no stock for it: unknown, not zero
+    expect((await byOdooId(4)).odooStock).toBeNull();
+    expect(await run()).toMatchObject({ restocked: 0 });
+  });
+
   it('switches off what Odoo archives or reprices to 1, and brings it back later', async () => {
     odoo.variants[3] = { ...odoo.variants[3], active: false };
     odoo.variants[1] = { ...odoo.variants[1], lst_price: 1, write_date: '2026-10-03 10:00:00' };
@@ -161,13 +180,13 @@ describe('Odoo catalogue sync (e2e)', () => {
       // the description is ours: Odoo has none
       const description = await t.http().patch(`/api/products/${id}`).set(bearer(admin)).field('description', 'Fits all models');
       expect(description.status).toBe(200);
-      expect(description.body).toMatchObject({ description: 'Fits all models', fromOdoo: true });
+      expect(description.body).toMatchObject({ description: 'Fits all models', fromOdoo: true, stock: 12 });
     });
 
     it('still lets staff edit a product they made themselves', async () => {
       const res = await t.http().patch(`/api/products/${world.products[0].id}/price`).set(bearer(admin)).send({ price: '510' });
       expect(res.status).toBe(200);
-      expect(res.body.fromOdoo).toBe(false);
+      expect(res.body).toMatchObject({ fromOdoo: false, stock: null });
     });
 
     it('reports that Odoo is not connected, and refuses to sync, when it is not set up', async () => {
