@@ -50,8 +50,15 @@ describe('skipReason', () => {
     expect(skipReason(variant({ lst_price: 99_999_999_999 }))).toBe('price out of range');
   });
 
-  it('rejects services, archived and not-for-sale products', () => {
-    expect(skipReason(variant({ type: 'service' }))).toBe('service');
+  it('accepts a priced service, such as a software install', () => {
+    expect(skipReason(variant({ type: 'service', is_storable: false, categ_id: [41, 'Software'] }))).toBeNull();
+  });
+
+  it('rejects a service without a real price, like any other product', () => {
+    expect(skipReason(variant({ type: 'service', is_storable: false, lst_price: 0 }))).toBe('price is 0 or 1');
+  });
+
+  it('rejects archived and not-for-sale products', () => {
     expect(skipReason(variant({ active: false }))).toBe('archived');
     expect(skipReason(variant({ sale_ok: false }))).toBe('not for sale');
   });
