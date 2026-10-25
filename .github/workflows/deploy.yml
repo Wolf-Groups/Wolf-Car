@@ -1,16 +1,19 @@
 # Deploys the site whenever `production` changes: GitHub connects to the
-# droplet with a key that can do one thing only — run scripts/deploy.sh
-# (the key's forced command in /root/.ssh/authorized_keys). That script pulls,
-# builds, waits for health, runs the smoke test and rolls back on failure, so a
-# red run here means the previous version is still the one serving.
+# droplet as the unprivileged `deploy` user with a key that can do one thing
+# only — run scripts/deploy.sh (the key's forced command in
+# /home/deploy/.ssh/authorized_keys, set up by deploy/harden-ssh.sh). That
+# script pulls, builds, waits for health, runs the smoke test and rolls back on
+# failure, so a red run here means the previous version is still the one serving.
 #
-# The droplet's SSH port is closed to the internet, so the runner first joins
-# the Tailscale network as a short-lived tag:ci machine and connects over it.
+# The droplet accepts SSH only over Tailscale (deploy/harden-ssh.sh closes the
+# public port), so the runner first joins the Tailscale network as a
+# short-lived tag:ci machine and connects over it.
 #
 # Secrets: DEPLOY_SSH_KEY (private key), DEPLOY_TAILNET_HOST (the server's
 # 100.x Tailscale IP), DEPLOY_TAILNET_KNOWN_HOSTS (its host keys under that IP),
-# TS_OAUTH_CLIENT_ID and TS_OAUTH_SECRET (a Tailscale OAuth client with the
-# auth_keys scope and tag:ci).
+# DEPLOY_SSH_USER (`deploy`; falls back to `root` while the server has not
+# run deploy/harden-ssh.sh yet), TS_OAUTH_CLIENT_ID and TS_OAUTH_SECRET (a
+# Tailscale OAuth client with the auth_keys scope and tag:ci).
 name: Deploy
 
 on:
@@ -55,10 +58,11 @@ jobs:
       - name: Deploy on the server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_TAILNET_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_SSH_USER || 'root' }}
         run: |
           ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o BatchMode=yes \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
-              "root@$DEPLOY_HOST" deploy
+              "$DEPLOY_USER@$DEPLOY_HOST" deploy
 
       - name: Remove the key
         if: always()
