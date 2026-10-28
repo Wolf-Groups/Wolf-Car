@@ -8,11 +8,11 @@
  * `db:import-odoo` command.
  */
 import { randomUUID } from 'node:crypto';
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { PrismaClient } from '../generated/prisma/client';
 import { deleteStoredImage, processAndStoreImage } from '../uploads/image-processing';
-import { categoryTile } from './category-image';
+import { categoryImage } from './category-image';
 import {
   arabicCategoryName,
   categoryName,
@@ -54,6 +54,8 @@ export interface SyncOptions {
   hideLegacy?: boolean;
   /** treat every product as changed and fetch its photo again */
   forceImages?: boolean;
+  /** the repository's photo or logo per category tab (default: prisma/category-images) */
+  categoryImagesDir?: string;
   log?: (line: string) => void;
 }
 
@@ -98,6 +100,7 @@ export async function syncOdooCatalogue(
     dryRun = false,
     hideLegacy = false,
     forceImages = false,
+    categoryImagesDir,
     log = () => undefined,
   } = options;
 
@@ -324,7 +327,7 @@ export async function syncOdooCatalogue(
   }
   // brand links, Arabic names for the categories the old catalogue never had,
   // and an image for every tab: the brand's photo for a model without its
-  // own, else a logo from prisma/category-images/<key>.png, else a name tile
+  // own, else the repository's photo or logo for it (categoryImage), else a name tile
   let models = 0;
   const parentOf = (odooId: number): string | null => {
     const source = odooCategories.get(odooId);
@@ -365,7 +368,7 @@ export async function syncOdooCatalogue(
           : !row.imageKey && !brands.has(id)
             ? {
                 imageKey: await processAndStoreImage(
-                  await categoryTile({ label: odooName, logo: await categoryLogo(odooName) }),
+                  await categoryImage(odooName, categoryImagesDir),
                   uploadDir,
                 ),
               }
@@ -478,15 +481,6 @@ export async function syncOdooCatalogue(
     for (const branch of branches) await placeInBranch(prisma, branch.id, createdIds);
   }
   return summary;
-}
-
-/** A logo kept in the repository for a category, e.g. prisma/category-images/thabt.png. */
-async function categoryLogo(name: string): Promise<Buffer | undefined> {
-  try {
-    return await readFile(path.resolve('prisma/category-images', `${legacyCategoryKey(name)}.png`));
-  } catch {
-    return undefined; // no logo for this one: it gets a name tile
-  }
 }
 
 /** A copy of a stored image under a new key, so no two rows can remove each other's photo. */
