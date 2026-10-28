@@ -173,8 +173,9 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
               </p>
             </div>
 
-            {/* always this wrapper around the card: a new parent would redraw Tap's form and empty it */}
-            <div className={cn("relative", !ready && loadFailed !== "script" && "min-h-[95px]")}>
+            {/* Always this wrapper around the card: a new parent would redraw Tap's form and empty it.
+                Under 380px it takes 16px more on each side, or Tap's clear-all X runs into the CVV. */}
+            <div className={cn("relative max-[379px]:-mx-4", !ready && loadFailed !== "script" && "min-h-[95px]")}>
               {loadFailed !== "script" && (
                 <TapCard
                   key={attempt}
@@ -241,7 +242,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
             <div className="flex flex-wrap items-center justify-between gap-x-4">
               <p className="text-[13px] text-ink-2">{t("acceptedCards")}</p>
               {ready && (
-                <Button type="button" variant="link" onClick={clearCard} disabled={busy} className="h-auto min-h-11 px-0 text-[13px]">
+                <Button type="button" variant="link" onClick={clearCard} disabled={busy} className="h-auto min-h-11 px-0 text-[13px] text-ink-2 hover:text-ink">
                   <RotateCcw className="size-3.5" aria-hidden="true" />
                   {t("clearCard")}
                 </Button>
