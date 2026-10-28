@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isCarModel } from '../../public/category-kind';
 import { imageUrl } from '../../uploads/image-processing';
 import type { CustomerPrincipal } from './customers.service';
 
@@ -36,13 +37,17 @@ export class CustomerCarsService {
 
   /**
    * Replaces the list with `categoryIds`, in that order (the DTO checks there are
-   * at most CUSTOMER_CARS_MAX, unique). Each must be an active car model, not a
-   * brand (a category with models under it): 400 UNKNOWN_CAR otherwise, and nothing changes.
+   * at most CUSTOMER_CARS_MAX, unique). Each must be an active car model: not a
+   * brand (a category with models under it) and not parts, accessories or a
+   * service (isCarModel): 400 UNKNOWN_CAR otherwise, and nothing changes.
    */
   async replace(customer: CustomerPrincipal, categoryIds: string[]): Promise<CustomerCarView[]> {
     if (categoryIds.length > 0) {
-      const found = await this.prisma.category.findMany({ where: { id: { in: categoryIds }, isActive: true, children: { none: {} } }, select: { id: true } });
-      if (found.length !== categoryIds.length) throw unknownCar();
+      const found = await this.prisma.category.findMany({
+        where: { id: { in: categoryIds }, isActive: true, children: { none: {} } },
+        select: { id: true, name: true, nameEn: true },
+      });
+      if (found.length !== categoryIds.length || !found.every(isCarModel)) throw unknownCar();
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.customerCar.deleteMany({ where: { customerId: customer.id } });

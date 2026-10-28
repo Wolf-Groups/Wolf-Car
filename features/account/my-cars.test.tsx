@@ -9,8 +9,8 @@ import { MyCars } from "./my-cars";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const car = (n: number, nameEn: string): CustomerCar => ({ id: id(n), name: `سيارة ${n}`, nameEn, thumbUrl: null });
-const model = (n: number, nameEn: string): PublicCategory => ({ id: id(n), name: `سيارة ${n}`, nameEn, carModel: null, imageUrl: null, thumbUrl: null, count: 10 });
-const MODELS = [model(8, "Leopard 8"), model(5, "Leopard 5"), model(1, "Thabt"), model(2, "Tank 300"), model(3, "Tank 500"), model(4, "Jetour T2")];
+const model = (n: number, nameEn: string, isCar = true): PublicCategory => ({ id: id(n), name: `سيارة ${n}`, nameEn, carModel: null, isCar, imageUrl: null, thumbUrl: null, count: 10 });
+const MODELS = [model(8, "Leopard 8"), model(5, "Leopard 5"), model(1, "Thabt"), model(2, "Tank 300"), model(3, "Tank 500"), model(4, "Jetour T2"), model(9, "Genuine Parts", false)];
 
 function api(saved: CustomerCar[]) {
   const puts: unknown[] = [];
@@ -45,6 +45,15 @@ describe("my cars", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("link", { name: "Leopard 5" })).toBeInTheDocument();
     expect(puts).toEqual([{ categoryIds: [id(5), id(8)] }]);
+  });
+
+  it("offers only car models, not parts or services", async () => {
+    api([]);
+    const { user } = renderOnSite(<MyCars />);
+    await user.click(await screen.findByRole("button", { name: "Add your car" }));
+    const picker = await screen.findByRole("group", { name: "Choose up to 5 cars" });
+    expect(within(picker).getByRole("button", { name: "Tank 300" })).toBeInTheDocument();
+    expect(within(picker).queryByRole("button", { name: "Genuine Parts" })).not.toBeInTheDocument();
   });
 
   it("allows five cars at most", async () => {

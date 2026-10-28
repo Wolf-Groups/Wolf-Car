@@ -109,7 +109,8 @@ function CarPicker({ initial, onSaved, onCancel }: { initial: string[]; onSaved:
     try {
       const res = await fetch("/api/public/categories");
       if (!res.ok) throw new Error(String(res.status));
-      setModels((await res.json()) as PublicCategory[]);
+      // the catalogue's tabs also hold parts, accessories and services: only the cars are offered
+      setModels(((await res.json()) as PublicCategory[]).filter((c) => c.isCar));
     } catch {
       setLoadFailed(true);
     }

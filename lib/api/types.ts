@@ -361,6 +361,8 @@ export interface PublicCategory {
   /** English name for /en; null means show `name` */
   nameEn: string | null;
   carModel: string | null;
+  /** a car model a customer can add to "My cars"; false for parts, accessories and services */
+  isCar: boolean;
   imageUrl: string | null;
   thumbUrl: string | null;
   /** how many products the category holds */

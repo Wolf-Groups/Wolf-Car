@@ -95,14 +95,18 @@ describe('PublicCatalogService', () => {
         parentId: null,
         products: plain(9, 'b'),
       },
+      { id: 'g', name: 'القطع الاصلية', nameEn: 'Genuine Parts', carModel: 'Wolf Car', imageKey: null, position: 0, parentId: null, products: plain(2, 'g') },
     ] as never);
     const cats = await service.categories();
     expect(cats.map((c) => [c.id, c.count])).toEqual([
       ['b', 9],
       ['a', 5],
+      ['g', 2],
     ]);
+    // parts and services are tabs of the catalogue, but not cars a customer drives
+    expect(cats.map((c) => c.isCar)).toEqual([true, true, false]);
     expect(cats[0].thumbUrl).toBe('/api/uploads/11111111-1111-4111-8111-111111111111-sm.webp');
     expect(cats[1].imageUrl).toBeNull();
-    expect(cats.map((c) => c.nameEn)).toEqual([null, 'Rox']);
+    expect(cats.map((c) => c.nameEn)).toEqual([null, 'Rox', 'Genuine Parts']);
   });
 });
