@@ -138,6 +138,8 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
 
   let icon: ReactNode;
   let headline: string;
+  /** announced with the headline (inside the live region) */
+  let note: ReactNode = null;
   /** inside the status card, under the headline */
   let body: ReactNode = null;
   /** cards below the status card */
@@ -213,10 +215,10 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       icon = <Clock className="size-7 shrink-0 text-muted" aria-hidden="true" />;
       headline = t("stillPending");
       // a second payment now could charge twice: the order settles by itself once the bank answers
+      note = <p className="text-[15px] font-semibold text-ink-2">{t("dontPayAgain")}</p>;
       body = (
         <>
           {order && <OrderCode code={order.code} />}
-          <p className="text-[15px] font-semibold text-ink-2">{t("dontPayAgain")}</p>
           <Actions>
             <Button type="button" size="lg" onClick={checkAgain}>
               {t("checkAgain")}
@@ -247,7 +249,10 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       <section className="grid gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
         <div aria-live="polite" className="flex items-start gap-3">
           {icon}
-          <h1 className="text-[clamp(20px,4vw,26px)] leading-snug font-extrabold">{headline}</h1>
+          <div className="grid gap-1">
+            <h1 className="text-[clamp(20px,4vw,26px)] leading-snug font-extrabold">{headline}</h1>
+            {note}
+          </div>
         </div>
         {body}
       </section>

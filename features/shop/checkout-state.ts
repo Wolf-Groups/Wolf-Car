@@ -31,6 +31,24 @@ export const initialState: CheckoutState = {
   resendAt: null,
 };
 
+/**
+ * An order the checkout may take (back) to the pay step: still open and unpaid,
+ * not past its expiry, and no capture on it (money already taken is for the branch to sort out).
+ */
+export function resumable(order: WebOrder): boolean {
+  return (
+    order.status === "PENDING" &&
+    order.paymentStatus === "PENDING" &&
+    order.lastPayment?.status !== "CAPTURED" &&
+    (order.expiresAt === null || Date.parse(order.expiresAt) > Date.now())
+  );
+}
+
+/** Paid, or captured and held back (AMOUNT_MISMATCH, DUPLICATE_CAPTURE): nothing left to pay here. */
+export function paidOrHeld(order: WebOrder): boolean {
+  return order.paymentStatus === "PAID" || (order.lastPayment?.status === "CAPTURED" && order.lastPayment.failureCode !== null);
+}
+
 export type CheckoutEvent =
   | { type: "SESSION_FOUND"; customer: CustomerProfile }
   | { type: "NO_SESSION" }

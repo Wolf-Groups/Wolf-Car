@@ -145,6 +145,8 @@ describe("Tap card", () => {
     expect(state.config).toMatchObject({ customer: { nameOnCard: "Sara Ali", editable: true } });
 
     view.rerender(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale="en" nameOnCard="Someone Else" />);
+    // a redraw would call renderTapCard once the SDK's promise settles: let it
+    await act(async () => {});
     expect(sdk.renderTapCard).toHaveBeenCalledTimes(1);
   });
 
@@ -190,6 +192,21 @@ describe("Tap card", () => {
     sdkScripts()[0].dispatchEvent(new Event("error"));
     await waitFor(() => expect(onLoadError).toHaveBeenCalledWith("script"));
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps Tap's frame see-through on the dark page, and out of reach while inert, without a redraw", async () => {
+    const { sdk, state } = stubCardSdk();
+    const ref = createRef<TapCardHandle>();
+    const view = render(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale="en" />);
+    await waitFor(() => expect(state.config).not.toBeNull());
+    const box = view.container.querySelector("#tap-card-sdk")!;
+    expect(box).toHaveClass("[color-scheme:light]");
+    expect(box).not.toHaveAttribute("inert");
+
+    view.rerender(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale="en" inert />);
+    expect(box).toHaveAttribute("inert");
+    await act(async () => {});
+    expect(sdk.renderTapCard).toHaveBeenCalledTimes(1);
   });
 
   it("unmounts Tap's form when the card goes away", async () => {
@@ -250,7 +267,7 @@ describe("Tap card: a tokenize Tap does not answer never hangs", () => {
 
   it("gives up after TOKENIZE_TIMEOUT_MS (30 s) and ignores Tap's late answer", async () => {
     expect(TOKENIZE_TIMEOUT_MS).toBe(30_000);
-    const { sdk, state, call } = stubCardSdk();
+    const { sdk, state, call } = stubCardSdk({ wipeAfterToken: false });
     vi.mocked(sdk.tokenize).mockImplementationOnce(() => undefined);
     const { ref } = renderCard();
     await waitFor(() => expect(state.config).not.toBeNull());
@@ -298,6 +315,17 @@ describe("Tap card: a form that never gets ready", () => {
 
     (state.config!.onReady as () => void)();
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("also tells the page when Tap's script never finishes downloading (no load, no error)", async () => {
+    // no SDK on the page: loadTapSdk adds the script tag, which jsdom never loads, like a stalled request
+    const onLoadError = vi.fn();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderCard("en", { onLoadError });
+    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
+    expect(onLoadError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onLoadError).toHaveBeenCalledWith("timeout");
   });
 
   it("says nothing when the form is ready in time", async () => {

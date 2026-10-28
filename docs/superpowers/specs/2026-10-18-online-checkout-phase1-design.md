@@ -89,7 +89,29 @@ Odoo with the Tap reference on it.
 
 ## Tap facts this design relies on
 
-Checked on developers.tap.company on 2026-10-18.
+Checked on developers.tap.company on 2026-10-18. Card form behaviour below
+"Card form, seen in the sandbox" was observed with SDK 1.0.2 between
+2026-10-24 and 2026-10-28 (see `features/shop/tap-card.tsx`).
+
+Card form, seen in the sandbox:
+
+- `interface.direction` must be `"ltr"` in Arabic too: `"rtl"` draws
+  4012 0000 3333 0026 as "0026 3333 0000 4012" and sends corrections to the
+  wrong digits. `locale: "ar"` keeps Arabic labels with `"ltr"`.
+- `onValidInput(isValid)` and `onInvalidInput(isInvalid)` are both called on
+  every change, `onInvalidInput` last. `tokenize()` on an incomplete form gets
+  no callback at all, and Tap marks no missing field.
+- Right after issuing a token, the form empties itself and reports invalid:
+  any retry needs the card typed again.
+- The cardholder-name field takes English letters only (Arabic letters are
+  dropped, with an English-only hint); `customer.nameOnCard` pre-fills it, but
+  an Arabic name loses its first letter, so only Latin names are passed.
+- `CardSDK.updateTheme("dark" | "light")` restyles in place; the frame's
+  container needs `color-scheme: light` on the dark page, or Chrome paints a
+  white backdrop behind it. `CardSDK.resetCardInputs()` empties every field in
+  place (a pre-filled name too).
+- The frame (`#tap-card-iframe`) has an English title ("Secure payment input");
+  the page renames it in the page's language once the form is ready.
 
 - Browser: `https://tap-sdks.b-cdn.net/card/1.0.2/index.js` renders the card
   form into a `div` with `renderTapCard(containerId, config)` and the public
@@ -439,3 +461,6 @@ Web: `NEXT_PUBLIC_TAP_PUBLIC_KEY` (`pk_test_…`), read at build time.
    line with `price_unit` = the price paid gets that tax added on confirm and
    Odoo's total will not match the Tap amount. Phase 1 sends the paid unit
    price as is; the accountant should check one order in the test database.
+6. **Cardholder name** (for Tap): does our account need the name on the card
+   form? If not, `fields.cardHolder` can be turned off, which removes the
+   English-letters-only field (README section 11, questions for Tap).

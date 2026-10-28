@@ -14,6 +14,9 @@ const THREE_DS = "https://acceptance.sandbox.tap.company/gosell/v2/payment/3ds?c
 const PAY = /^Pay QAR\s619\.50$/;
 const PAY_AR = /^ادفع .*619\.50/;
 const CARD_INVALID = "Some card details are missing or incorrect. Check the card number, expiry date and security code, and type the cardholder name in English letters.";
+const PAYMENT_FAILED = "The payment with this card didn't go through. Enter the card details again, including the cardholder name in English letters, or try another card.";
+const CARD_REENTER = "The payment didn't go through. Enter your card details again, including the cardholder name in English letters, then press Pay.";
+const reload = vi.fn();
 const assign = vi.fn();
 
 function listenForPay(answer: () => Response | Promise<Response>) {
@@ -29,7 +32,7 @@ function listenForPay(answer: () => Response | Promise<Response>) {
 
 beforeEach(() => {
   // jsdom cannot navigate; Tap's 3-D Secure page is reached through location.assign
-  vi.stubGlobal("location", { ...window.location, assign });
+  vi.stubGlobal("location", { ...window.location, assign, reload });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -87,7 +90,7 @@ describe("checkout: pay step", () => {
   });
 
   it("keeps the step when the card is declined, so another card can be tried", async () => {
-    stubCardSdk();
+    const { call } = stubCardSdk();
     const sent = listenForPay(() => apiError(402, "PAYMENT_FAILED", { reason: "INVALID_TOKEN" }));
     const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
     const pay = await screen.findByRole("button", { name: PAY });
@@ -95,22 +98,46 @@ describe("checkout: pay step", () => {
     await user.click(pay);
 
     // Tap empties its form once it has issued the token: the card has to be typed again
-    expect(await screen.findByRole("alert")).toHaveTextContent("The payment with this card didn't go through. Enter the card details again or try another card.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(PAYMENT_FAILED);
     expect(assign).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole("button", { name: PAY })).toBeEnabled());
 
+    // pressed again before typing the card: nothing is sent
+    await user.click(screen.getByRole("button", { name: PAY }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(CARD_INVALID);
+    expect(sent).toHaveLength(1);
+
+    // the card typed again: the message goes and Pay sends a second payment
+    act(() => {
+      call("onValidInput", true);
+      call("onInvalidInput", false);
+    });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: PAY }));
     await waitFor(() => expect(sent).toHaveLength(2));
   });
 
   it("says the order expired and offers the way back to the details", async () => {
     stubCardSdk();
-    listenForPay(() => apiError(409, "ORDER_NOT_PAYABLE"));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    listenForPay(async () => {
+      await gate;
+      return apiError(409, "ORDER_NOT_PAYABLE");
+    });
     const onBack = vi.fn();
-    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={onBack} />);
+    const { user } = renderOnSite(
+      <>
+        <PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={onBack} />
+        <button type="button">elsewhere</button>
+      </>,
+    );
     const pay = await screen.findByRole("button", { name: PAY });
     await waitFor(() => expect(pay).toBeEnabled());
     await user.click(pay);
+    // a browser takes focus off the button it disables
+    act(() => screen.getByRole("button", { name: "elsewhere" }).focus());
+    release();
 
     expect(await screen.findByText("This order timed out before it was paid. Go back to your details and confirm it again.")).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
@@ -235,7 +262,7 @@ describe("checkout: pay step", () => {
       return { unmount };
     });
     renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Loading the secure card form…");
+    expect(await screen.findByText("Loading the secure card form…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: PAY })).toBeDisabled();
 
     await waitFor(() => expect(state.config).not.toBeNull());
@@ -296,8 +323,12 @@ describe("checkout: pay step", () => {
     await waitFor(() => expect(pay).toBeEnabled());
     await user.click(pay);
 
-    const covering = await screen.findByText(/Confirming your payment/);
-    expect(covering.closest("[role=status]")).toHaveTextContent("VISA •••• 0010");
+    // what a sighted customer sees over Tap's emptied form...
+    const covering = await screen.findByText("VISA •••• 0010");
+    expect(covering.closest("[aria-hidden=true]")).toHaveTextContent(/Confirming your payment/);
+    // ...what a screen reader is told, and the emptied form is out of reach meanwhile
+    expect(screen.getByRole("status")).toHaveTextContent("Confirming your payment… your bank may ask you to confirm it on its page.");
+    expect(document.getElementById("tap-card-sdk")).toHaveAttribute("inert");
     release();
     await waitFor(() => expect(assign).toHaveBeenCalledWith(THREE_DS));
   });
@@ -310,7 +341,7 @@ describe("checkout: pay step", () => {
     await waitFor(() => expect(pay).toBeEnabled());
     await user.click(pay);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("The payment didn't go through. Enter your card details again, then press Pay.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(CARD_REENTER);
     expect(screen.getByRole("button", { name: PAY })).toHaveAttribute("aria-describedby", "checkout-pay-error");
     expect(screen.queryByText(/Confirming your payment/)).not.toBeInTheDocument();
   });
@@ -326,6 +357,29 @@ describe("checkout: pay step", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Online payment isn't available right now. Order on WhatsApp instead.");
     expect(within(alert).getByRole("link", { name: /Order on WhatsApp/ })).toHaveAttribute("href", expect.stringContaining("wa.me"));
+  });
+
+  it("says the card was cleared, to screen readers too", async () => {
+    stubCardSdk();
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: PAY })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Clear card details and re-enter" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Card details cleared.");
+  });
+
+  it("asks for a reload, not the card again, when the session no longer matches the order after Tap took the card", async () => {
+    stubCardSdk();
+    const sent = listenForPay(() => apiError(401, "SESSION_EXPIRED"));
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    const pay = await screen.findByRole("button", { name: PAY });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await user.click(pay);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("You're no longer signed in with the number this order was made with. Reload the page to continue.");
+    await user.click(within(alert).getByRole("button", { name: "Reload the page" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
   });
 
   it("does not ask Tap for a token while the card form is invalid", async () => {
@@ -387,5 +441,88 @@ describe("checkout: pay step, a card form that never gets ready", () => {
     act(() => call("onReady"));
     await waitFor(() => expect(screen.getByRole("button", { name: PAY })).toBeEnabled());
     expect(screen.queryByText(/The card form couldn't load/)).not.toBeInTheDocument();
+  });
+
+  it("draws a new form on Reload when Tap's script is there but its form never got ready, and focuses the card section", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { sdk, state, unmount } = stubCardSdk();
+    vi.mocked(sdk.renderTapCard).mockImplementationOnce((_id, config) => {
+      state.config = config;
+      return { unmount };
+    });
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    await waitFor(() => expect(state.config).not.toBeNull());
+    await act(() => vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS));
+
+    await user.click(await screen.findByRole("button", { name: "Reload the card form" }));
+    expect(unmount).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(sdk.renderTapCard).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("heading", { name: "Card details" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: PAY })).toBeEnabled());
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("reloads the page when Tap's script never arrived: a new tag would wait on the same stalled request", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    removeCardSdk();
+    const { user } = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    await act(() => vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The card form couldn't load.");
+    expect(screen.getByRole("link", { name: /Order on WhatsApp/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reload the card form" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("checkout: pay step, back from the bank's page (restored from the back-forward cache)", () => {
+  /** Pays until the page leaves for 3-D Secure, then brings it back as the browser's Back would. */
+  async function payThenComeBack(reconcile: () => Response | Promise<Response>) {
+    stubCardSdk();
+    listenForPay(() => HttpResponse.json({ redirectUrl: THREE_DS, order: webOrder() }));
+    const asked = vi.fn();
+    server.use(http.post(`/api/shop/orders/${ORDER_ID}/reconcile`, () => (asked(), reconcile())));
+    const view = renderOnSite(<PayStep order={webOrder()} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    const pay = await screen.findByRole("button", { name: PAY });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await view.user.click(pay);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(THREE_DS));
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    return asked;
+  }
+
+  it("keeps Pay off until Tap says how that charge ended, then asks for the card again if it is still open", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const asked = await payThenComeBack(async () => {
+      await gate;
+      return HttpResponse.json(webOrder({ lastPayment: { status: "INITIATED", failureCode: null } }));
+    });
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Processing…" })).toBeDisabled();
+
+    release();
+    expect(await screen.findByRole("alert")).toHaveTextContent(CARD_REENTER);
+    expect(screen.getByRole("button", { name: PAY })).toBeEnabled();
+  });
+
+  it("goes to the result page when the bank took the money meanwhile", async () => {
+    await payThenComeBack(() => HttpResponse.json(webOrder({ status: "CONFIRMED", paymentStatus: "PAID", lastPayment: { status: "CAPTURED", failureCode: null } })));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/checkout/return?order=${ORDER_ID}`));
+    expect(screen.getByRole("button", { name: "Processing…" })).toBeDisabled();
+  });
+
+  it("says the card was not accepted when that charge failed", async () => {
+    await payThenComeBack(() => HttpResponse.json(webOrder({ lastPayment: { status: "FAILED", failureCode: "DECLINED" } })));
+    expect(await screen.findByRole("alert")).toHaveTextContent(PAYMENT_FAILED);
+    expect(screen.getByRole("button", { name: PAY })).toBeEnabled();
+  });
+
+  it("asks for the card again when Tap cannot be asked", async () => {
+    await payThenComeBack(() => apiError(503, "CHECKOUT_UNAVAILABLE"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(CARD_REENTER);
+    expect(screen.getByRole("button", { name: PAY })).toBeEnabled();
   });
 });

@@ -1,4 +1,4 @@
-/** Tap Card SDK Web v2, loaded once on the pay step. */
+/** Tap Card SDK Web v2, loaded once: fetched early by the details step, drawn by the pay step. */
 export const TAP_SDK_URL = "https://tap-sdks.b-cdn.net/card/1.0.2/index.js";
 
 export interface TapToken {
@@ -11,7 +11,7 @@ export interface CardSdk {
   tokenize(): void;
   /** restyles the form in place, keeping what was typed */
   updateTheme?(theme: "light" | "dark"): void;
-  /** empties the number, expiry, CVV and name; Tap does not report the emptied form */
+  /** empties the number, expiry, CVV and name in place; Tap reports the emptied form a few ms later */
   resetCardInputs?(): void;
   Currencies?: Record<string, string>;
 }

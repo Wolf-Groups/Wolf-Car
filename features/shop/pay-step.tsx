@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api/client";
 import type { WebOrder } from "@/lib/api/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { paidOrHeld } from "./checkout-state";
 import { OrderLines } from "./order-lines";
 import { shop } from "./shop-api";
 import { TAP_CARD_CONTAINER_ID, TAP_CARD_INVALID, TapCard, type TapCardHandle } from "./tap-card";
@@ -43,6 +44,8 @@ interface PayError {
   text: string;
   /** card payment is off for now: offer the WhatsApp order next to the message */
   whatsapp?: boolean;
+  /** the session no longer matches the order: a reload signs in again or starts over for whoever is signed in */
+  reload?: boolean;
 }
 
 /** Step 4: total, pickup branch, the Tap card and the Pay button; follows Tap's redirect. */
@@ -63,6 +66,9 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
   /** bumped by "Reload the card form": a new TapCard, which loads Tap again */
   const [attempt, setAttempt] = useState(0);
   const backButton = useRef<HTMLButtonElement>(null);
+  const cardHeading = useRef<HTMLHeadingElement>(null);
+  /** said to screen readers only, from an element that is always there so each change is announced */
+  const [announcement, setAnnouncement] = useState("");
   const branch = locale === "ar" ? order.branch.nameAr : order.branch.name;
   const name = order.customer.name?.trim() ?? "";
   const total = formatMoney(order.total, locale);
@@ -71,19 +77,38 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
   useEffect(() => {
     const restored = (e: PageTransitionEvent) => {
       if (!e.persisted) return;
-      // that payment was not finished, and Tap empties its form once it has taken the card
-      if (paying.current) setError({ text: t("errors.CARD_REENTER") });
-      paying.current = false;
-      setBusy(false);
       setProcessing(null);
+      setAnnouncement("");
+      if (!paying.current) return setBusy(false);
+      // That charge may have been decided at the bank since: Tap is asked before Pay is offered again.
+      // Pay stays off meanwhile; a second press now could charge twice.
+      shop.reconcile(order.id).then(
+        (latest) => {
+          if (paidOrHeld(latest)) return router.replace(`/checkout/return?order=${order.id}`);
+          paying.current = false;
+          setBusy(false);
+          // Tap emptied its form when it took the card: either way the card is typed again
+          setError({ text: latest.lastPayment?.status === "FAILED" ? t("errors.PAYMENT_FAILED") : t("errors.CARD_REENTER") });
+        },
+        () => {
+          paying.current = false;
+          setBusy(false);
+          setError({ text: t("errors.CARD_REENTER") });
+        },
+      );
     };
     window.addEventListener("pageshow", restored);
     return () => window.removeEventListener("pageshow", restored);
-  }, [t]);
+  }, [order.id, router, t]);
 
   useEffect(() => {
     if (expired) backButton.current?.focus();
   }, [expired]);
+
+  // "Reload the card form" took away the focused button: focus goes to the card section it reloads
+  useEffect(() => {
+    if (attempt > 0) cardHeading.current?.focus();
+  }, [attempt]);
 
   // opened by itself (a reload, Back from the bank, "Try another card"): the card, not the order list, is what is left to do
   const broughtIntoView = useRef(false);
@@ -103,6 +128,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
     try {
       token = await card.current.tokenize();
       setProcessing(token);
+      setAnnouncement(t("confirming"));
       const { redirectUrl } = await shop.pay(order.id, token.id, locale);
       // the page is being left: Pay stays disabled
       if (redirectUrl) window.location.assign(redirectUrl);
@@ -111,6 +137,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
       paying.current = false;
       setBusy(false);
       setProcessing(null);
+      setAnnouncement("");
       if (e instanceof ApiError && e.code === "ORDER_NOT_PAYABLE") return setExpired(true);
       // paid meanwhile (another tab, an earlier try that went through): its result page has the order code
       if (e instanceof ApiError && e.code === "ALREADY_PAID") return router.replace(`/checkout/return?order=${order.id}`);
@@ -119,6 +146,9 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
         setError({ text: t("errors.TAP_CARD_INVALID") });
         return scrollToCard();
       }
+      // Signed out meanwhile (another tab), or another number is signed in now: typing the card again
+      // cannot help. A reload asks for the code, or starts over for whoever is signed in.
+      if (token && e instanceof ApiError && (e.status === 401 || e.status === 404)) return setError({ text: t("errors.SESSION_CHANGED"), reload: true });
       // Tap empties its form as soon as it issues a token: from here on, trying again needs the card typed again
       if (token) {
         setError({ text: e instanceof ApiError && e.code === "PAYMENT_FAILED" ? t("errors.PAYMENT_FAILED") : t("errors.CARD_REENTER") });
@@ -131,9 +161,13 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
   const clearCard = () => {
     card.current?.reset();
     setError(null);
+    setAnnouncement(t("cardCleared"));
   };
 
   const reloadCard = () => {
+    // Tap's script never arrived: a new tag for the same address would wait on the same stalled request,
+    // so the page itself is fetched again (?order= reopens this step; nothing was typed, nothing paid)
+    if (!window.CardSDK) return window.location.reload();
     setLoadFailed(null);
     setReady(false);
     setAttempt((n) => n + 1);
@@ -165,7 +199,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
         <div className="grid gap-4">
           <section aria-labelledby="checkout-card" aria-describedby="checkout-card-hint" className="grid gap-3 border-t border-line pt-5">
             <div className="grid gap-1">
-              <h2 id="checkout-card" className="text-[17px] font-extrabold">
+              <h2 ref={cardHeading} id="checkout-card" tabIndex={-1} className="text-[17px] font-extrabold outline-none">
                 {t("cardTitle")}
               </h2>
               <p id="checkout-card-hint" className="text-[13px] leading-relaxed text-ink-2">
@@ -174,8 +208,9 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
             </div>
 
             {/* Always this wrapper around the card: a new parent would redraw Tap's form and empty it.
-                Under 380px it takes 16px more on each side, or Tap's clear-all X runs into the CVV. */}
-            <div className={cn("relative max-[379px]:-mx-4", !ready && loadFailed !== "script" && "min-h-[95px]")}>
+                Under 370px it takes 16px more on each side, or Tap's clear-all X runs into the CVV; any
+                wider and Tap narrows its CVV field so far that the Arabic placeholder is cut. */}
+            <div className={cn("relative max-[369px]:-mx-4", ((!ready && loadFailed !== "script") || processing) && "min-h-[95px]")}>
               {loadFailed !== "script" && (
                 <TapCard
                   key={attempt}
@@ -190,6 +225,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
                     setLoadFailed(null);
                   }}
                   onLoadError={setLoadFailed}
+                  inert={processing !== null}
                   onError={() => setError({ text: t("errors.generic") })}
                   // a message about the last attempt is out of date once the customer has corrected the card
                   onValidityChange={(valid) => {
@@ -207,9 +243,10 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
                 </div>
               )}
               {processing && (
+                // announced through the status line below; this is what a sighted customer sees
                 <div
-                  role="status"
-                  className="absolute inset-0 z-10 grid place-items-center rounded-[var(--radius-brand)] bg-surface/95 px-4 text-center"
+                  aria-hidden="true"
+                  className="absolute inset-0 z-10 grid place-items-center rounded-[var(--radius-brand)] bg-surface px-4 text-center"
                 >
                   <div className="grid justify-items-center gap-1">
                     {processing.card?.last_four && (
@@ -230,7 +267,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
                   {t("cardLoadFailed")}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={reloadCard} className="min-h-12">
+                  <Button type="button" variant="outline" onClick={reloadCard} className="h-auto min-h-12 shrink whitespace-normal py-2 text-start">
                     <RotateCcw className="size-4" aria-hidden="true" />
                     {t("reloadCard")}
                   </Button>
@@ -257,8 +294,17 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
               >
                 <p>{error.text}</p>
                 {error.whatsapp && <WhatsAppOrderLink lines={asCartLines(order)} />}
+                {error.reload && (
+                  <Button type="button" variant="outline" onClick={() => window.location.reload()} className="h-auto min-h-11 shrink whitespace-normal py-2">
+                    <RotateCcw className="size-4" aria-hidden="true" />
+                    {t("reloadPage")}
+                  </Button>
+                )}
               </div>
             )}
+            <p role="status" className="sr-only">
+              {announcement}
+            </p>
           </section>
 
           <Button type="button" size="lg" onClick={pay} disabled={!ready || busy} aria-describedby={error ? "checkout-pay-error" : undefined}>

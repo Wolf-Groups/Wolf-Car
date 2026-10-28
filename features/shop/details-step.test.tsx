@@ -8,6 +8,7 @@ import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
 import { apiError, CART_KEY, CART_PRODUCTS, customer, ORDER_ID, webOrder } from "@/tests/shop-fixtures";
 import { DetailsStep } from "./details-step";
+import { TAP_SDK_URL } from "./tap-sdk";
 
 vi.mock("@/lib/track", () => ({ track: vi.fn() }));
 
@@ -180,6 +181,17 @@ describe("checkout: details step with lines that have no price", () => {
     const text = decodeURIComponent(whatsapp.getAttribute("href") ?? "");
     expect(text).toContain("PPF Full Wrap");
     expect(text).not.toContain("3D Floor Mats");
+  });
+
+  it("starts fetching Tap's card script while the customer types, for a faster pay step", async () => {
+    renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />);
+    await waitFor(() => expect(document.querySelector(`script[src="${TAP_SDK_URL}"]`)).not.toBeNull());
+  });
+
+  it("reads a product name in its own script's direction", () => {
+    act(() => cart.add({ id: "p-grille", name: "G700 جيتور - شبك امامي", price: null, thumbUrl: "/api/uploads/g-sm.webp" }));
+    renderOnSite(<DetailsStep customer={customer()} onCreated={vi.fn()} />, { locale: "ar" });
+    expect(screen.getByText("G700 جيتور - شبك امامي").closest("bdi")).toHaveAttribute("dir", "rtl");
   });
 
   it("says it in Arabic on the Arabic site", () => {

@@ -9,7 +9,8 @@ import { Link, useRouter } from "@/i18n/navigation";
 import type { WebOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { localQatarNumber } from "@/shared/shop";
-import { initialState, reduce, type Step } from "./checkout-state";
+import { ApiError } from "@/lib/api/client";
+import { initialState, paidOrHeld, reduce, resumable, type Step } from "./checkout-state";
 import { DetailsStep } from "./details-step";
 import { OtpStep } from "./otp-step";
 import { PayStep } from "./pay-step";
@@ -49,21 +50,14 @@ const displayPhone = (e164: string) => {
 };
 
 /**
- * An order "Try another card" may take back to the pay step: still open and unpaid,
- * not past its expiry, and no capture on it (money already taken is for the branch to sort out).
+ * The order to resume as it stands now. A charge still marked INITIATED may have been decided at the
+ * bank since the customer left its page (Back from 3-D Secure): Tap is asked before Pay is offered
+ * again, and if it cannot be asked, our own record stands.
  */
-function resumable(order: WebOrder): boolean {
-  return (
-    order.status === "PENDING" &&
-    order.paymentStatus === "PENDING" &&
-    order.lastPayment?.status !== "CAPTURED" &&
-    (order.expiresAt === null || Date.parse(order.expiresAt) > Date.now())
-  );
-}
-
-/** Paid, or captured and held back (AMOUNT_MISMATCH, DUPLICATE_CAPTURE): nothing left to pay here. */
-function paidOrHeld(order: WebOrder): boolean {
-  return order.paymentStatus === "PAID" || (order.lastPayment?.status === "CAPTURED" && order.lastPayment.failureCode !== null);
+async function currentOrder(id: string): Promise<WebOrder> {
+  const order = await shop.getOrder(id);
+  if (order.lastPayment?.status !== "INITIATED") return order;
+  return shop.reconcile(id).catch(() => order);
 }
 
 /**
@@ -131,7 +125,7 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
   useEffect(() => {
     if (!resuming || resumeId === null) return;
     let live = true;
-    shop.getOrder(resumeId).then(
+    currentOrder(resumeId).then(
       (order) => {
         if (!live) return;
         // paid, or money taken and held for the branch: its return page says so, and no new checkout starts
@@ -142,10 +136,16 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
         } else showOrderInUrl(null);
         setResumedFor(resumeFor);
       },
-      // gone, or not this customer's: the details step starts a new order
-      () => {
+      (e: unknown) => {
         if (!live) return;
-        showOrderInUrl(null);
+        // the session ended meanwhile: the phone step, and after the code this order comes back (?order= stays)
+        if (e instanceof ApiError && e.status === 401) {
+          setResumedFor(null);
+          return dispatch({ type: "NO_SESSION" });
+        }
+        // gone, or not this customer's: the details step starts a new order. Any other failure (offline,
+        // a 5xx) keeps the order in the address, so a reload tries again instead of starting a second one.
+        if (e instanceof ApiError && (e.status === 400 || e.status === 403 || e.status === 404)) showOrderInUrl(null);
         setResumedFor(resumeFor);
       },
     );

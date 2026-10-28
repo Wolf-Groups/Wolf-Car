@@ -110,6 +110,8 @@ describe("checkout return page", () => {
     expect(screen.getByRole("link", { name: "Try another card" })).toHaveAttribute("href", `/checkout?order=${ORDER_ID}`);
     expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
     expect(screen.queryByText("BO-000001")).not.toBeInTheDocument();
+    // the branch to call about it
+    expect(screen.getByRole("link", { name: /Call/ })).toBeInTheDocument();
 
     await tick(CHECKOUT_POLL_MS * 2);
     expect(calls.poll).toBe(0);
@@ -216,7 +218,8 @@ describe("checkout return page", () => {
     expect(await screen.findByText("We're still waiting for the bank to confirm your payment. Check again in a minute.")).toBeInTheDocument();
     // no answer is not a refusal: nothing invites a second payment, and the page says not to make one
     expect(screen.queryByRole("link", { name: "Try another card" })).not.toBeInTheDocument();
-    expect(screen.getByText("Please don't pay again. We'll confirm your order as soon as the bank does.")).toBeInTheDocument();
+    // announced together with the headline
+    expect(screen.getByText("Please don't pay again. We'll confirm your order as soon as the bank does.").closest("[aria-live]")).not.toBeNull();
     // the code and the branch, for a customer who calls about it
     expect(screen.getByText("BO-000001")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Call/ })).toBeInTheDocument();

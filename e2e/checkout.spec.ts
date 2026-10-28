@@ -12,6 +12,8 @@ import { ACCOUNTS, expect, signIn, test } from "./fixtures/test";
  * checkout; the unpriced ones and the protection packages (service rows) are not.
  */
 const PRODUCT = { name: "Oil Filter", price: "35.00", total: /QAR\s35\.00/ };
+/** the Pay button says the amount */
+const PAY = /^Pay QAR\s35\.00$/;
 const CUSTOMER = { name: "Sara Ali", email: "sara@example.com" };
 /** Tap's card SDK CDN and its API: the stub and the fake gateway stand in for both */
 const TAP_HOST = /(^|\.)tap\.company$|^tap-sdks\.b-cdn\.net$/;
@@ -60,13 +62,28 @@ test("a customer pays for parts by card and the cashier sees it", async ({ page 
     const { items } = order.request().postDataJSON() as { items: Record<string, unknown>[] };
     expect(items.map((i) => Object.keys(i).sort())).toEqual([["productId", "quantity"]]);
     expect(await order.json()).toMatchObject({ total: PRODUCT.price, currency: "QAR" });
-    await expect(page.getByRole("button", { name: "Pay now" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: PAY })).toBeEnabled();
     await expect(page.getByText(PRODUCT.total).first()).toBeVisible();
     await expect(page.getByText(/Collect from .*Bin Omran/)).toBeVisible();
   });
 
+  await test.step("a reload (or Back from the bank's page) reopens the same order's pay step", async () => {
+    // the order is kept in the address without a navigation (the history API, synced by Next)
+    await expect(page).toHaveURL(/\/en\/checkout\?order=[0-9a-f-]{36}$/);
+    let created = 0;
+    const count = (r: { url(): string; method(): string }) => {
+      if (new URL(r.url()).pathname === "/api/shop/orders" && r.method() === "POST") created += 1;
+    };
+    page.on("request", count);
+    await page.reload();
+    await expect(page.getByRole("button", { name: PAY })).toBeEnabled();
+    await expect(page.getByLabel("Full name")).toHaveCount(0);
+    page.off("request", count);
+    expect(created).toBe(0);
+  });
+
   await test.step("pays and comes back to a paid order with its code", async () => {
-    await page.getByRole("button", { name: "Pay now" }).click();
+    await page.getByRole("button", { name: PAY }).click();
     await page.waitForURL(/\/en\/checkout\/return\?order=[0-9a-f-]{36}$/);
     await expect(page.getByText("Payment received")).toBeVisible({ timeout: 10_000 });
     const code = page.getByText(/^BO-\d{6}$/);

@@ -67,14 +67,31 @@ describe("checkout: code step", () => {
   });
 
   it("empties the boxes after a wrong code and gives focus back, so the next code is typed from the start", async () => {
-    const tried = listenForVerify((code) =>
-      code === "482915" ? HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" }) : apiError(401, "OTP_INVALID"),
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const tried: unknown[] = [];
+    server.use(
+      http.post("/api/shop/otp/verify", async ({ request }) => {
+        const body = (await request.json()) as { phone: string; code: string };
+        tried.push(body);
+        if (body.code === "482915") return HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" });
+        await gate;
+        return apiError(401, "OTP_INVALID");
+      }),
     );
     const p = props();
-    const { user } = renderOnSite(<OtpStep {...p} />);
+    const { user } = renderOnSite(
+      <>
+        <OtpStep {...p} />
+        <button type="button">elsewhere</button>
+      </>,
+    );
     const input = screen.getByLabelText("Verification code");
 
     await user.type(input, "000000");
+    // a browser takes focus off the input it disables while the code is checked
+    act(() => screen.getByRole("button", { name: "elsewhere" }).focus());
+    release();
     expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the message and try again.");
     await waitFor(() => expect(input).toHaveFocus());
     expect(input).toHaveValue("");

@@ -224,6 +224,7 @@ describe("checkout page", () => {
 
   // controller ruling C5 (spec: "try another card" goes back to the pay step, never a second order)
   it("takes Try another card back to the pay step of the same order", async () => {
+    const scrolled = vi.spyOn(Element.prototype, "scrollIntoView");
     fillCart();
     stubCardSdk();
     setCustomerHint(true);
@@ -241,6 +242,69 @@ describe("checkout page", () => {
     expect(screen.getByText(/Signed in as/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
     expect(created).not.toHaveBeenCalled();
+    // opened by itself: the card, not the order list, is brought into view
+    await waitFor(() => expect(scrolled).toHaveBeenCalled());
+  });
+
+  it("asks Tap about a charge still open at the bank before offering Pay again, and shows a paid order its result", async () => {
+    fillCart();
+    stubCardSdk();
+    setCustomerHint(true);
+    visitWithOrder(ORDER_ID);
+    const reconciled = vi.fn();
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer())),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => HttpResponse.json(webOrder({ lastPayment: { status: "INITIATED", failureCode: null } }))),
+      http.post(`/api/shop/orders/${ORDER_ID}/reconcile`, () => (reconciled(), HttpResponse.json(paidOrder()))),
+    );
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/checkout/return?order=${ORDER_ID}`));
+    expect(reconciled).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: PAY })).not.toBeInTheDocument();
+  });
+
+  it("offers Pay again on our own record when Tap cannot be asked", async () => {
+    fillCart();
+    stubCardSdk();
+    setCustomerHint(true);
+    visitWithOrder(ORDER_ID);
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer())),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => HttpResponse.json(webOrder({ lastPayment: { status: "INITIATED", failureCode: null } }))),
+      http.post(`/api/shop/orders/${ORDER_ID}/reconcile`, () => apiError(503, "CHECKOUT_UNAVAILABLE")),
+    );
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+    expect(await screen.findByRole("button", { name: PAY })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["is not this customer's", 404, ""],
+    ["cannot be read right now", 503, `?order=${ORDER_ID}`],
+  ])("starts at the details when the order to resume %s, keeping it in the address only for a retry", async (_, status, search) => {
+    fillCart();
+    setCustomerHint(true);
+    visitWithOrder(ORDER_ID);
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer())),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => apiError(status, status === 404 ? "NOT_FOUND" : "server")),
+    );
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+    expect(await screen.findByLabelText("Full name")).toBeInTheDocument();
+    expect(window.location.search).toBe(search);
+  });
+
+  it("asks for the phone number when the session ended before the order could be read, and keeps the order for after the code", async () => {
+    fillCart();
+    setCustomerHint(true);
+    visitWithOrder(ORDER_ID);
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer())),
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => apiError(401, "SESSION_EXPIRED")),
+    );
+    renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+    expect(await screen.findByLabelText("Mobile number")).toBeInTheDocument();
+    expect(window.location.search).toBe(`?order=${ORDER_ID}`);
   });
 
   it("starts at the details when the order to resume has expired", async () => {

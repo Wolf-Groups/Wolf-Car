@@ -81,7 +81,16 @@ export function recordShopCalls(calls: ShopCall[]) {
  * was rendered with, answers tokenize() with `token` (or an error) on the
  * next microtask, and calls onReady once rendered, as the real SDK does.
  */
-export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0010", brand: "VISA" } }, fail }: { token?: TapToken; fail?: string } = {}) {
+export function stubCardSdk({
+  token = { id: "tok_fake_ok", card: { last_four: "0010", brand: "VISA" } },
+  fail,
+  wipeAfterToken = true,
+}: {
+  token?: TapToken;
+  fail?: string;
+  /** Tap's SDK 1.0.2 empties its form right after issuing a token and reports it invalid (seen in the sandbox) */
+  wipeAfterToken?: boolean;
+} = {}) {
   const state: { config: Record<string, unknown> | null } = { config: null };
   const unmount = vi.fn();
   const call = (name: "onReady" | "onSuccess" | "onError" | "onValidInput" | "onInvalidInput", arg?: unknown) => {
@@ -97,7 +106,14 @@ export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0
       return { unmount };
     }),
     tokenize: vi.fn(() => {
-      queueMicrotask(() => (fail ? call("onError", fail) : call("onSuccess", token)));
+      queueMicrotask(() => {
+        if (fail) return call("onError", fail);
+        call("onSuccess", token);
+        if (wipeAfterToken) {
+          call("onValidInput", false);
+          call("onInvalidInput", true);
+        }
+      });
     }),
     updateTheme: vi.fn(),
     resetCardInputs: vi.fn(),

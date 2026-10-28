@@ -13,9 +13,10 @@ export interface TapCardHandle {
    */
   tokenize(): Promise<TapToken>;
   /**
-   * Empties every card field (Tap's own reset), for a customer who lost their
-   * place in Tap's one-row form. Tap does not report the emptied form, so a
-   * tokenize before the card is typed again rejects with `TAP_CARD_INVALID`.
+   * Empties every card field in place (Tap's own reset, no redraw), for a
+   * customer who lost their place in Tap's one-row form. Tap reports the
+   * emptied form a few ms later; until the card is typed again, a tokenize
+   * rejects with `TAP_CARD_INVALID`. A pre-filled name is emptied too.
    */
   reset(): void;
 }
@@ -42,6 +43,8 @@ export interface TapCardProps {
    * form was not ready after READY_TIMEOUT_MS ("timeout"; it may still arrive, and onReady then follows).
    */
   onLoadError?: (reason: "script" | "timeout") => void;
+  /** while a payment is being confirmed: the form can be neither focused nor typed in (no redraw) */
+  inert?: boolean;
 }
 
 /** The card form is incomplete or wrong. Tap marks a wrong number or date itself, never a missing field, so the page says what to check. */
@@ -82,7 +85,7 @@ const siteTheme = (): "light" | "dark" => (document.documentElement.classList.co
 
 /** The Tap card form in `<div id="tap-card-sdk" />`; mounted through `loadTapSdk`, unmounted on cleanup. */
 export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
-  { publicKey, amount, locale, nameOnCard, frameTitle, onReady, onError, onValidityChange, onLoadError },
+  { publicKey, amount, locale, nameOnCard, frameTitle, onReady, onError, onValidityChange, onLoadError, inert = false },
   ref,
 ) {
   /** the SDK once Tap's form is on the page, null before and after */
@@ -102,8 +105,12 @@ export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
     let active = true;
     let ready = false;
     let card: { unmount(): void } | null = null;
-    let readyTimer: ReturnType<typeof setTimeout> | undefined;
     valid.current = null;
+    // Counted from now, whatever the form is stuck on: a script download that never ends (no load or
+    // error event ever comes), or Tap's frame that never answers. It may still arrive: onReady follows.
+    const readyTimer = setTimeout(() => {
+      if (active && !ready) latest.current.onLoadError?.("timeout");
+    }, READY_TIMEOUT_MS);
     /** records Tap's report and tells the page when it differs from the last one */
     const report = (isValid: boolean) => {
       const changed = valid.current !== isValid;
@@ -158,15 +165,10 @@ export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
           },
         });
         sdk.current = loaded;
-        // Tap's frame never loaded (blocked, offline): onReady will not come by itself
-        if (!ready) {
-          readyTimer = setTimeout(() => {
-            if (active) latest.current.onLoadError?.("timeout");
-          }, READY_TIMEOUT_MS);
-        }
       })
       // the script failed to load, or Tap refused the config: there is no form
       .catch(() => {
+        clearTimeout(readyTimer);
         if (active) latest.current.onLoadError?.("script");
       });
 
@@ -209,7 +211,7 @@ export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
       },
       reset() {
         sdk.current?.resetCardInputs?.();
-        // until the customer types the card again, Pay asks for it instead of waiting on Tap
+        // Tap's own report of the emptied form comes a few ms later: Pay must not reach Tap before it
         valid.current = false;
       },
     }),
@@ -218,5 +220,5 @@ export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
 
   // Tap's frame document declares no color scheme: on the dark page Chrome would paint an opaque
   // white backdrop behind it, so the frame's container says "light" and stays see-through.
-  return <div id={TAP_CARD_CONTAINER_ID} className="[color-scheme:light]" />;
+  return <div id={TAP_CARD_CONTAINER_ID} className="[color-scheme:light]" inert={inert} />;
 });
