@@ -13,6 +13,7 @@ export const WEB_ORDER_SELECT = {
   createdAt: true,
   expiresAt: true,
   paidAt: true,
+  collectedAt: true,
   customerName: true,
   customerEmail: true,
   customerPhone: true,
@@ -38,6 +39,8 @@ export interface WebOrderView {
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
+  /** when the branch handed the paid order over */
+  collectedAt: string | null;
   branch: { code: string; name: string; nameAr: string };
   customer: { name: string | null; email: string | null; phone: string };
   items: { productId: string; productName: string; unitPrice: string; quantity: number; lineTotal: string; thumbUrl: string }[];
@@ -56,6 +59,7 @@ export function webOrderView(row: WebOrderRow): WebOrderView {
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt?.toISOString() ?? null,
     paidAt: row.paidAt?.toISOString() ?? null,
+    collectedAt: row.collectedAt?.toISOString() ?? null,
     branch: { code: row.branch.code, name: row.branch.name, nameAr: row.branch.nameAr },
     // a web order always carries the phone it was placed with
     customer: { name: row.customerName, email: row.customerEmail, phone: row.customerPhone ?? '' },

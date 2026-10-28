@@ -282,8 +282,9 @@ model Category {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   products Product[]
-  parent   Category?  @relation("CategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
-  children Category[] @relation("CategoryParent")
+  drivenBy CustomerCar[]
+  parent   Category?     @relation("CategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[]    @relation("CategoryParent")
 
   @@index([position])
   @@index([parentId])
@@ -502,8 +503,27 @@ model Customer {
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   orders Order[]
+  cars   CustomerCar[]
 
   @@map("customers")
+}
+
+/// The car models a website customer drives (chosen in "My account"), so the
+/// catalogue can show their parts first. A model is a public category that is
+/// not a brand. At most CUSTOMER_CARS_MAX per customer.
+model CustomerCar {
+  customerId String   @map("customer_id") @db.Uuid
+  categoryId String   @map("category_id") @db.Uuid
+  /// order the customer listed them in (0 first)
+  position   Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, categoryId])
+  @@index([categoryId])
+  @@map("customer_cars")
 }
 
 /// One-time sign-in codes. Only the hash is stored; a row dies when consumed,

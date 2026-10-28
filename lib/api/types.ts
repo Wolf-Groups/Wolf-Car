@@ -230,6 +230,14 @@ export interface WebOrderItem {
   thumbUrl: string;
 }
 
+/** A car model the signed-in customer drives (the API's CustomerCarView); `id` is the catalogue's ?category=. */
+export interface CustomerCar {
+  id: string;
+  name: string;
+  nameEn: string | null;
+  thumbUrl: string | null;
+}
+
 /** What the website is told about a customer's own order (the API's WebOrderView, dates as strings). */
 export interface WebOrder {
   id: string;
@@ -242,6 +250,8 @@ export interface WebOrder {
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
+  /** when the branch handed the paid order over */
+  collectedAt: string | null;
   branch: { code: string; name: string; nameAr: string };
   customer: { name: string | null; email: string | null; phone: string };
   items: WebOrderItem[];

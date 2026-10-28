@@ -1,8 +1,9 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { CUSTOMER_EMAIL_MAX, normaliseQatarPhone, OTP_CODE_PATTERN } from '../../../../shared/shop';
 import { ORDER_MAX_LINES } from '../../../../shared/validation';
 import { CustomerName, OrderLineDto } from '../../orders/dto/orders.dto';
+import { CUSTOMER_CARS_MAX } from '../customers/customer-cars.service';
 
 /**
  * Phone as the customer typed it, normalised to "+974XXXXXXXX". Anything that
@@ -57,4 +58,13 @@ export class PayDto {
 
   @IsIn(['ar', 'en'])
   locale: 'ar' | 'en';
+}
+
+export class SaveCarsDto {
+  /** Car-model category ids, in the order the customer wants them; [] clears the list. */
+  @IsArray()
+  @ArrayMaxSize(CUSTOMER_CARS_MAX)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  categoryIds: string[];
 }

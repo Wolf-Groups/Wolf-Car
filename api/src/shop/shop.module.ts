@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CheckoutExpiryService } from './checkout/checkout-expiry.service';
 import { CheckoutController } from './checkout/checkout.controller';
 import { CheckoutService } from './checkout/checkout.service';
+import { CustomerCarsService } from './customers/customer-cars.service';
 import { CustomerGuard } from './customers/customer.guard';
 import { CustomersService } from './customers/customers.service';
 import { OtpService } from './customers/otp.service';
@@ -14,7 +15,7 @@ import { ConsoleSmsSender, SMS_SENDER } from './sms/sms-sender';
 @Module({
   imports: [PaymentsModule],
   controllers: [ShopAuthController, CheckoutController, PaymentsController],
-  providers: [CustomersService, OtpService, CustomerGuard, CheckoutService, CheckoutExpiryService, { provide: SMS_SENDER, useClass: ConsoleSmsSender }],
+  providers: [CustomersService, CustomerCarsService, OtpService, CustomerGuard, CheckoutService, CheckoutExpiryService, { provide: SMS_SENDER, useClass: ConsoleSmsSender }],
   exports: [CustomersService, CustomerGuard],
 })
 export class ShopModule {}

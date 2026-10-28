@@ -1,8 +1,10 @@
 import Image from "next/image";
 import { getTranslations } from "next-intl/server";
+import { AccountLink } from "./AccountLink";
 import { Wrap } from "./Button";
 import { LocaleSwitcher } from "./LocaleSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
+import { cardCheckoutEnabled } from "@/features/shop/card-checkout";
 import { Link } from "@/i18n/navigation";
 import { LOGO } from "@/lib/content";
 
@@ -26,6 +28,7 @@ export async function SubpageHeader() {
           <Link href="/" className="hidden min-h-11 items-center px-2 text-sm font-bold text-ink-2 hover:text-ink sm:inline-flex">
             {t("backHome")}
           </Link>
+          <AccountLink enabled={cardCheckoutEnabled()} className="text-ink-2 hover:text-ink" />
           <ThemeToggle />
           <LocaleSwitcher />
         </div>

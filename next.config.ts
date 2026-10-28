@@ -58,6 +58,9 @@ const nextConfig: NextConfig = {
       { source: "/:locale(ar|en)/slots", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/checkout", headers: CHECKOUT_HEADERS },
       { source: "/:locale(ar|en)/checkout/:path*", headers: CHECKOUT_HEADERS },
+      // the customer's account and orders: private, never framed nor indexed
+      { source: "/:locale(ar|en)/account", headers: APP_HEADERS },
+      { source: "/:locale(ar|en)/account/:path*", headers: APP_HEADERS },
     ];
   },
 };

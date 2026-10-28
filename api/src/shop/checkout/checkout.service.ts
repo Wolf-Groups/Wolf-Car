@@ -142,6 +142,24 @@ export class CheckoutService {
     return { order, replayed: false };
   }
 
+  /**
+   * The customer's own web orders, newest first. Checkouts cancelled before any
+   * card was charged (expired or given up) are left out, as in the staff list.
+   */
+  async list(customer: CustomerPrincipal): Promise<WebOrderView[]> {
+    const rows = await this.prisma.order.findMany({
+      where: {
+        customerId: customer.id,
+        source: 'WEB',
+        NOT: { status: 'CANCELLED', paymentStatus: 'PENDING', payments: { none: { status: 'CAPTURED' } } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: WEB_ORDER_SELECT,
+    });
+    return rows.map(webOrderView);
+  }
+
   /** The customer's own order; 404 for anyone else's. */
   async get(customer: CustomerPrincipal, id: string): Promise<WebOrderView> {
     const row = await this.prisma.order.findFirst({ where: { id, customerId: customer.id }, select: WEB_ORDER_SELECT });

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Put, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -9,9 +9,10 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { AuthThrottle } from '../../common/decorators/auth-throttle.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { Env } from '../../config/env';
-import { SendOtpDto, VerifyOtpDto } from '../dto/shop.dto';
+import { SaveCarsDto, SendOtpDto, VerifyOtpDto } from '../dto/shop.dto';
 import { CsrfGuard } from './csrf.guard';
 import { CurrentCustomer } from './current-customer.decorator';
+import { CustomerCarsService, type CustomerCarView } from './customer-cars.service';
 import { CustomerGuard } from './customer.guard';
 import { CustomersService, type CustomerPrincipal, type CustomerProfileView } from './customers.service';
 import { OtpService } from './otp.service';
@@ -31,6 +32,7 @@ export class ShopAuthController {
     private readonly tokens: TokenService,
     private readonly config: ConfigService<Env, true>,
     private readonly trail: AuditTrail,
+    private readonly customerCars: CustomerCarsService,
   ) {}
 
   private get secure(): boolean {
@@ -73,6 +75,24 @@ export class ShopAuthController {
   @Get('me')
   me(@CurrentCustomer() customer: CustomerPrincipal): Promise<CustomerProfileView> {
     return this.customers.profile(customer.id);
+  }
+
+  /** The car models the customer drives, in their order. */
+  @ApiCookieAuth('wc_cst')
+  @UseGuards(CustomerGuard)
+  @Get('me/cars')
+  cars(@CurrentCustomer() customer: CustomerPrincipal): Promise<CustomerCarView[]> {
+    return this.customerCars.list(customer);
+  }
+
+  /** Replaces the list (at most 5, each an active car model); 400 UNKNOWN_CAR otherwise. */
+  @ApiCookieAuth('wc_cst')
+  @UseGuards(CustomerGuard)
+  @Audit('shop.cars.update', { entity: 'Customer' })
+  @Put('me/cars')
+  saveCars(@CurrentCustomer() customer: CustomerPrincipal, @Body() dto: SaveCarsDto): Promise<CustomerCarView[]> {
+    this.trail.setEntity('Customer', customer.id).addMetadata({ categoryIds: dto.categoryIds });
+    return this.customerCars.replace(customer, dto.categoryIds);
   }
 
   /** Signs this device out; the token itself stays valid until logout-all. */
