@@ -266,7 +266,28 @@ Salespeople have no accounts. They open **`/ar/slots`** (or `/en/slots`) and typ
 
 ### Deploying
 
-The droplet follows the `production` branch. Merging into `production` runs `.github/workflows/deploy.yml`, which connects to the server and runs `scripts/deploy.sh` (pull, build, health check, smoke test, automatic rollback). A green check on the commit means it is live; a red one means the previous version is still serving. To deploy by hand: `ssh wolfcar 'cd /opt/wolfcar/app && scripts/deploy.sh'`.
+The droplet follows the `production` branch. Merging into `production` runs `.github/workflows/deploy.yml`, which connects to the server and runs `scripts/deploy.sh` (pull, build, health check, smoke test, automatic rollback). A green check on the commit means it is live; a red one means the previous version is still serving. To deploy by hand, as the `deploy` user so the checkout stays owned by it: `ssh wolf@<server 100.x ip> "sudo -iu deploy bash -c 'cd /opt/wolfcar/app && scripts/deploy.sh'"`.
+
+### Server access (SSH)
+
+The droplet accepts SSH **only over Tailscale**; port 22 is closed to the internet. Password login and direct `root` login are off. Admins sign in as a normal account (`wolf`) and use `sudo`; GitHub Actions signs in as `deploy` (docker group) with a key whose forced command can only run `scripts/deploy.sh`. All of this is set by `deploy/harden-ssh.sh`, which is safe to re-run and refuses to close the public port until it is itself being run over Tailscale by the admin user (so you cannot lock yourself out):
+
+```bash
+# 1st run (today's path, root over the public IP): users, no password login, Tailscale
+ssh root@167.172.106.106 'bash /opt/wolfcar/app/deploy/harden-ssh.sh'
+# 2nd run, from a laptop with Tailscale on, as the admin: closes public 22, PermitRootLogin no
+ssh wolf@<server 100.x ip> 'sudo bash /opt/wolfcar/app/deploy/harden-ssh.sh'
+```
+
+Then set the GitHub secret `DEPLOY_SSH_USER=deploy` (the workflow falls back to `root` while it is unset) and re-run the Deploy workflow. Checklist, from Tap's review:
+
+- [ ] `nc -z -w 3 167.172.106.106 22` fails from any network without Tailscale.
+- [ ] `sshd -T | grep -iE 'permitrootlogin|passwordauthentication'` shows `no` and `no`.
+- [ ] `ufw status` shows 22 only `on tailscale0`; 80 and 443 open; nothing else (5432, 3000, 4000 closed).
+- [ ] Every key listed by the script under "authorised keys" belongs to a current admin or to GitHub; delete the rest from that user's `~/.ssh/authorized_keys`.
+- [ ] `apt list --upgradable` is empty or only non-security packages; reboot if the script said so.
+- [ ] Deploy workflow green, site loads, `scripts/smoke.sh https://wolfcar.qa` passes.
+- [ ] Re-run the external security scan.
 
 ## 8. Security notes
 

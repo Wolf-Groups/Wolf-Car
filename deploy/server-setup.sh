@@ -21,7 +21,9 @@ if ! swapon --show | grep -q /swapfile; then
   sysctl -p /etc/sysctl.d/99-swap.conf
 fi
 
-# firewall: SSH + web only (containers publish on 127.0.0.1, see compose.prod.yml)
+# firewall: web only from the internet; SSH only over Tailscale (containers
+# publish on 127.0.0.1, see compose.prod.yml). Public port 22 stays open only
+# until deploy/harden-ssh.sh is run over Tailscale (it removes the rule itself).
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow OpenSSH
@@ -30,6 +32,12 @@ ufw allow 443/tcp
 ufw --force enable
 systemctl enable --now fail2ban
 dpkg-reconfigure -f noninteractive unattended-upgrades
+
+# Tailscale: the only way in for SSH (admins and GitHub Actions)
+if ! command -v tailscale >/dev/null; then
+  curl -fsSL https://tailscale.com/install.sh | sh
+fi
+systemctl enable --now tailscaled
 
 # Docker Engine + Compose plugin (official apt repo)
 if ! command -v docker >/dev/null; then
@@ -69,3 +77,7 @@ cat > /etc/cron.d/wolfcar-backup <<'CRON'
 CRON
 
 echo "setup done: $(docker --version), $(caddy version | cut -d' ' -f1), swap $(free -h | awk '/Swap/{print $2}')"
+
+# SSH lockdown (admin + deploy users, no password login). Phase 1 here; the
+# final run (close public 22, PermitRootLogin no) is done over Tailscale.
+echo; echo "now join the tailnet with 'tailscale up', then: bash /opt/wolfcar/app/deploy/harden-ssh.sh"
