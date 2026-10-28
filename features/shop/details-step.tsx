@@ -2,7 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { preconnect } from "react-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Icon } from "@/components/Icon";
@@ -15,11 +16,13 @@ import { ApiError } from "@/lib/api/client";
 import { fieldErrors } from "@/lib/api/errors";
 import type { CustomerProfile, WebOrder, WebOrderItem } from "@/lib/api/types";
 import { getBranches, waLink } from "@/lib/branches";
+import { hasArabic } from "@/lib/text";
 import { track } from "@/lib/track";
 import { CUSTOMER_EMAIL_MAX, EMAIL_PATTERN } from "@/shared/shop";
 import { CUSTOMER_NAME_MAX, CUSTOMER_NAME_MIN, CUSTOMER_NAME_PATTERN } from "@/shared/validation";
 import { OrderLines } from "./order-lines";
 import { shop } from "./shop-api";
+import { loadTapSdk } from "./tap-sdk";
 import { useCheckoutError } from "./use-checkout-error";
 
 export interface DetailsStepProps {
@@ -79,6 +82,14 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
   const { errors, isSubmitting } = form.formState;
   const summary = basketSummary(lines);
 
+  // Tap's card form comes next: fetch its script while the customer types, so the card shows sooner
+  useEffect(() => {
+    preconnect("https://sdk.tap.company");
+    loadTapSdk().catch(() => {
+      /* the pay step loads it again and says so if it still fails */
+    });
+  }, []);
+
   const submit = form.handleSubmit(async ({ name, email }) => {
     if (lines.length === 0) return;
     setError(null);
@@ -123,8 +134,8 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
           <ul className="grid gap-1 text-[14px]">
             {unpriced.map((l) => (
               <li key={l.id} className="flex items-baseline gap-2">
-                <span dir="auto" className="min-w-0 flex-1 text-start font-semibold">
-                  {l.name}
+                <span className="min-w-0 flex-1 text-start font-semibold">
+                  <bdi dir={hasArabic(l.name) ? "rtl" : "ltr"}>{l.name}</bdi>
                 </span>
                 <span dir="ltr" className="shrink-0 text-ink-2 tabular-nums">
                   ×{l.qty}

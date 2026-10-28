@@ -3,11 +3,9 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useReducer, useRef, useState } from "react";
-import { Icon } from "@/components/Icon";
 import { buttonVariants } from "@/components/ui/button";
-import { type CartLine, orderMessage, useCart } from "@/features/catalog/cart";
+import { type CartLine, useCart } from "@/features/catalog/cart";
 import { Link, useRouter } from "@/i18n/navigation";
-import { getBranches, waLink } from "@/lib/branches";
 import type { WebOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { localQatarNumber } from "@/shared/shop";
@@ -18,6 +16,7 @@ import { PayStep } from "./pay-step";
 import { PhoneStep } from "./phone-step";
 import { ORDER_ID_PATTERN, shop } from "./shop-api";
 import { type CustomerSession, useCustomer } from "./use-customer";
+import { WhatsAppOrderLink } from "./whatsapp-order-link";
 
 export interface CheckoutProps {
   /** NEXT_PUBLIC_TAP_PUBLIC_KEY (card-checkout.ts); empty: card checkout is off */
@@ -29,6 +28,19 @@ const SHOW_DEV_CODE = process.env.NODE_ENV !== "production";
 
 const STEPS = ["phone", "code", "details", "pay"] as const satisfies readonly Step[];
 const STEP_LABEL = { phone: "stepPhone", code: "stepCode", details: "stepDetails", pay: "stepPay" } as const;
+
+/**
+ * Keeps the open order in the address (?order=), so a reload, Forward, or Back from Tap's
+ * 3-D Secure page reopens its pay step through the resume below instead of starting a new order.
+ * The browser's own history API: Next syncs useSearchParams without a navigation, so the pay step
+ * and Tap's form are not drawn again.
+ */
+function showOrderInUrl(orderId: string | null) {
+  const url = new URL(window.location.href);
+  if (orderId === null) url.searchParams.delete("order");
+  else url.searchParams.set("order", orderId);
+  window.history.replaceState(null, "", url);
+}
 
 /** "+97455123456" → "+974 5512 3456" */
 const displayPhone = (e164: string) => {
@@ -60,24 +72,11 @@ function paidOrHeld(order: WebOrder): boolean {
  */
 function CheckoutNotice({ message, whatsapp = [] }: { message: string; whatsapp?: CartLine[] }) {
   const t = useTranslations("Checkout");
-  const tc = useTranslations("Cart");
-  const locale = useLocale() === "ar" ? "ar" : "en";
   return (
     <div className="grid justify-items-start gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
       <p className="text-[17px] text-ink-2">{message}</p>
       <div className="flex flex-wrap gap-3">
-        {whatsapp.length > 0 && (
-          <a
-            href={waLink(locale, "binomran", orderMessage(whatsapp, locale))}
-            target="_blank"
-            rel="noopener"
-            data-track="whatsapp_order"
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-wa px-5 text-[15px] font-bold text-white hover:brightness-95"
-          >
-            <Icon name="wa" className="size-5" />
-            {tc("checkout", { branch: getBranches(locale).binomran.short })}
-          </a>
-        )}
+        {whatsapp.length > 0 && <WhatsAppOrderLink lines={whatsapp} />}
         <Link href="/products" className={cn(buttonVariants({ variant: whatsapp.length > 0 ? "outline" : "default", size: "lg" }))}>
           {t("backToCatalog")}
         </Link>
@@ -111,6 +110,8 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
   const resumeId = orderParam !== null && ORDER_ID_PATTERN.test(orderParam) ? orderParam : null;
   /** the customer (phone) the resume was settled for: signing in again on this page tries again */
   const [resumedFor, setResumedFor] = useState<string | null>(null);
+  /** the pay step was opened by a resume, not by "Continue": it brings the card into view */
+  const [payResumed, setPayResumed] = useState(false);
 
   // the remembered session decides the first step, in the same render it arrives (no flash of the phone step)
   const [seen, setSeen] = useState<CustomerSession["status"]>("loading");
@@ -123,7 +124,9 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
   // signed in, by a remembered session or a code on this page (VERIFIED)
   const signedIn = state.step === "details" || state.step === "pay" ? state.customer : null;
   const resumeFor = resumeId !== null && signedIn ? signedIn.phone : null;
-  const resuming = resumeFor !== null && resumedFor !== resumeFor;
+  // the order in the address is the one on screen (just created here): nothing to fetch, and fetching would redraw the card
+  const showing = state.step === "pay" && state.order?.id === resumeId;
+  const resuming = resumeFor !== null && resumedFor !== resumeFor && !showing;
 
   useEffect(() => {
     if (!resuming || resumeId === null) return;
@@ -133,12 +136,17 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
         if (!live) return;
         // paid, or money taken and held for the branch: its return page says so, and no new checkout starts
         if (paidOrHeld(order)) return router.replace(`/checkout/return?order=${order.id}`);
-        if (resumable(order)) dispatch({ type: "ORDER_CREATED", order });
+        if (resumable(order)) {
+          setPayResumed(true);
+          dispatch({ type: "ORDER_CREATED", order });
+        } else showOrderInUrl(null);
         setResumedFor(resumeFor);
       },
       // gone, or not this customer's: the details step starts a new order
       () => {
-        if (live) setResumedFor(resumeFor);
+        if (!live) return;
+        showOrderInUrl(null);
+        setResumedFor(resumeFor);
       },
     );
     return () => {
@@ -239,10 +247,28 @@ function CheckoutFlow({ publicKey }: CheckoutProps) {
           />
         )}
         {state.step === "details" && state.customer && (
-          <DetailsStep customer={state.customer} onCreated={(order) => dispatch({ type: "ORDER_CREATED", order })} />
+          <DetailsStep
+            customer={state.customer}
+            onCreated={(order) => {
+              setPayResumed(false);
+              // settled for this customer: the ?order= written next never sends this order through the resume
+              setResumedFor(state.customer?.phone ?? null);
+              dispatch({ type: "ORDER_CREATED", order });
+              showOrderInUrl(order.id);
+            }}
+          />
         )}
         {state.step === "pay" && state.order && (
-          <PayStep order={state.order} publicKey={publicKey} locale={locale} onBack={() => dispatch({ type: "BACK_TO_DETAILS" })} />
+          <PayStep
+            order={state.order}
+            publicKey={publicKey}
+            locale={locale}
+            resumed={payResumed}
+            onBack={() => {
+              dispatch({ type: "BACK_TO_DETAILS" });
+              showOrderInUrl(null);
+            }}
+          />
         )}
       </div>
     </div>

@@ -1,8 +1,8 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeCardSdk, stubCardSdk } from "@/tests/shop-fixtures";
-import { TAP_CARD_INVALID, TAP_CARD_TIMEOUT, TapCard, type TapCardHandle, TOKENIZE_TIMEOUT_MS } from "./tap-card";
+import { READY_TIMEOUT_MS, TAP_CARD_INVALID, TAP_CARD_TIMEOUT, TapCard, type TapCardHandle, TOKENIZE_TIMEOUT_MS } from "./tap-card";
 import { TAP_SDK_URL, type TapToken } from "./tap-sdk";
 
 const sdkScripts = () => document.querySelectorAll<HTMLScriptElement>(`script[src="${TAP_SDK_URL}"]`);
@@ -10,9 +10,20 @@ const sdkScripts = () => document.querySelectorAll<HTMLScriptElement>(`script[sr
 afterEach(() => {
   removeCardSdk();
   sdkScripts().forEach((s) => s.remove());
+  document.documentElement.classList.remove("dark");
 });
 
-function renderCard(locale: "ar" | "en" = "en", extra: { onReady?: () => void; onError?: (message: string) => void } = {}) {
+function renderCard(
+  locale: "ar" | "en" = "en",
+  extra: {
+    onReady?: () => void;
+    onError?: (message: string) => void;
+    onValidityChange?: (valid: boolean) => void;
+    onLoadError?: (reason: "script" | "timeout") => void;
+    nameOnCard?: string;
+    frameTitle?: string;
+  } = {},
+) {
   const ref = createRef<TapCardHandle>();
   const view = render(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale={locale} {...extra} />);
   return { ref, ...view };
@@ -35,11 +46,43 @@ describe("Tap card", () => {
     );
   });
 
-  it("is right-to-left in Arabic", async () => {
+  it("keeps the card fields left-to-right in Arabic, with Arabic labels", async () => {
+    // right-to-left showed 4012 0000 3333 0026 as "0026 3333 0000 4012" and broke correcting a digit
     const { sdk } = stubCardSdk();
     renderCard("ar");
     await waitFor(() => expect(sdk.renderTapCard).toHaveBeenCalled());
-    expect(sdk.renderTapCard).toHaveBeenCalledWith("tap-card-sdk", expect.objectContaining({ interface: expect.objectContaining({ locale: "ar", direction: "rtl" }) }));
+    expect(sdk.renderTapCard).toHaveBeenCalledWith("tap-card-sdk", expect.objectContaining({ interface: expect.objectContaining({ locale: "ar", direction: "ltr" }) }));
+  });
+
+  it("matches the site's dark mode, and follows a switch without rebuilding the form", async () => {
+    document.documentElement.classList.add("dark");
+    const { sdk, state } = stubCardSdk();
+    renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+    expect(state.config).toMatchObject({ interface: { theme: "dark" } });
+
+    act(() => document.documentElement.classList.remove("dark"));
+    await waitFor(() => expect(sdk.updateTheme).toHaveBeenLastCalledWith("light"));
+    // a new form would lose what the customer typed
+    expect(sdk.renderTapCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the page when the card becomes complete or incomplete, once per change", async () => {
+    const { state, call } = stubCardSdk();
+    const onValidityChange = vi.fn();
+    renderCard("en", { onValidityChange });
+    await waitFor(() => expect(state.config).not.toBeNull());
+
+    // the real SDK calls both on every keystroke, onInvalidInput last
+    call("onValidInput", false);
+    call("onInvalidInput", true);
+    call("onValidInput", false);
+    call("onInvalidInput", true);
+    expect(onValidityChange.mock.calls).toEqual([[false]]);
+
+    call("onValidInput", true);
+    call("onInvalidInput", false);
+    expect(onValidityChange.mock.calls).toEqual([[false], [true]]);
   });
 
   it("only takes Visa and Mastercard and never offers to save the card", async () => {
@@ -51,7 +94,8 @@ describe("Tap card", () => {
       transaction: { amount: 619.5, currency: "QAR" },
       acceptance: { supportedBrands: ["VISA", "MASTERCARD"], supportedCards: "ALL" },
       fields: { cardHolder: true },
-      addons: { loader: true, saveCard: false, displayPaymentBrands: true },
+      // the page shows the accepted cards in a line of its own that never moves
+      addons: { loader: true, saveCard: false, displayPaymentBrands: false },
       interface: { locale: "en", theme: "light", edges: "curved", direction: "ltr" },
     });
   });
@@ -91,6 +135,61 @@ describe("Tap card", () => {
 
     await expect(ref.current!.tokenize()).rejects.toBeDefined();
     await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
+  });
+
+  it("pre-fills the name on the card when given, and never redraws the form for another one", async () => {
+    const { sdk, state } = stubCardSdk();
+    const ref = createRef<TapCardHandle>();
+    const view = render(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale="en" nameOnCard="Sara Ali" />);
+    await waitFor(() => expect(state.config).not.toBeNull());
+    expect(state.config).toMatchObject({ customer: { nameOnCard: "Sara Ali", editable: true } });
+
+    view.rerender(<TapCard ref={ref} publicKey="pk_test_wolfcar" amount="619.50" locale="en" nameOnCard="Someone Else" />);
+    expect(sdk.renderTapCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends no customer to Tap when there is no name to pre-fill", async () => {
+    const { state } = stubCardSdk();
+    renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+    expect(state.config).not.toHaveProperty("customer");
+  });
+
+  it("renames Tap's English frame title in the page's language once the form is ready", async () => {
+    stubCardSdk();
+    const onReady = vi.fn();
+    const { container } = renderCard("ar", { onReady, frameTitle: "نموذج بيانات البطاقة الآمن من Tap" });
+    await waitFor(() => expect(onReady).toHaveBeenCalled());
+    expect(container.querySelector("#tap-card-iframe")).toHaveAttribute("title", "نموذج بيانات البطاقة الآمن من Tap");
+  });
+
+  it("reset() empties Tap's form in place and asks for the card again before any tokenize", async () => {
+    const { sdk, state, call } = stubCardSdk();
+    const { ref } = renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+    call("onValidInput", true);
+    call("onInvalidInput", false);
+
+    ref.current!.reset();
+    expect(sdk.resetCardInputs).toHaveBeenCalledTimes(1);
+    // Tap reports nothing about the emptied form: Pay must not wait on a tokenize that never answers
+    await expect(ref.current!.tokenize()).rejects.toThrow(TAP_CARD_INVALID);
+    expect(sdk.tokenize).not.toHaveBeenCalled();
+    expect(sdk.renderTapCard).toHaveBeenCalledTimes(1);
+
+    call("onValidInput", true);
+    call("onInvalidInput", false);
+    await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
+  });
+
+  it("tells the page when Tap's script cannot load", async () => {
+    const onLoadError = vi.fn();
+    const onError = vi.fn();
+    renderCard("en", { onLoadError, onError });
+    await waitFor(() => expect(sdkScripts()).toHaveLength(1));
+    sdkScripts()[0].dispatchEvent(new Event("error"));
+    await waitFor(() => expect(onLoadError).toHaveBeenCalledWith("script"));
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("unmounts Tap's form when the card goes away", async () => {
@@ -169,6 +268,47 @@ describe("Tap card: a tokenize Tap does not answer never hangs", () => {
     call("onSuccess", { id: "tok_late" });
     await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
     expect(sdk.tokenize).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Tap card: a form that never gets ready", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("tells the page after READY_TIMEOUT_MS (20 s), and keeps the form in case it still arrives", async () => {
+    expect(READY_TIMEOUT_MS).toBe(20_000);
+    const { sdk, state, unmount } = stubCardSdk();
+    // Tap's frame was blocked: no onReady
+    vi.mocked(sdk.renderTapCard).mockImplementationOnce((_id, config) => {
+      state.config = config;
+      return { unmount };
+    });
+    const onLoadError = vi.fn();
+    const onReady = vi.fn();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderCard("en", { onLoadError, onReady });
+    // the SDK is already on the page: its promise settles without the clock moving
+    await vi.advanceTimersByTimeAsync(0);
+    expect(state.config).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
+    expect(onLoadError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onLoadError).toHaveBeenCalledWith("timeout");
+    expect(unmount).not.toHaveBeenCalled();
+
+    (state.config!.onReady as () => void)();
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("says nothing when the form is ready in time", async () => {
+    const { state } = stubCardSdk();
+    const onLoadError = vi.fn();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderCard("en", { onLoadError });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(state.config).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+    expect(onLoadError).not.toHaveBeenCalled();
   });
 });
 

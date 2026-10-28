@@ -56,7 +56,17 @@ export function reduce(state: CheckoutState, event: CheckoutEvent): CheckoutStat
     case "CHANGE_PHONE":
       return { ...next, step: "phone", customer: null };
     case "ORDER_CREATED":
-      return { ...next, step: "pay", order: event.order };
+      // the order's name and email fill the details step again if the customer goes back to it
+      return {
+        ...next,
+        step: "pay",
+        order: event.order,
+        customer: state.customer && {
+          ...state.customer,
+          name: event.order.customer.name ?? state.customer.name,
+          email: event.order.customer.email ?? state.customer.email,
+        },
+      };
     case "BACK_TO_DETAILS":
       return { ...next, step: "details", order: null };
     case "BUSY":

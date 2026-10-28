@@ -89,14 +89,18 @@ export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0
     if (typeof fn === "function") (fn as (value?: unknown) => void)(arg);
   };
   const sdk: CardSdk = {
-    renderTapCard: vi.fn((_containerId: string, config: Record<string, unknown>) => {
+    renderTapCard: vi.fn((containerId: string, config: Record<string, unknown>) => {
       state.config = config;
+      // Tap's own frame, with its English title (the page renames it once the form is ready)
+      document.getElementById(containerId)?.insertAdjacentHTML("beforeend", '<iframe id="tap-card-iframe" title="Secure payment input"></iframe>');
       queueMicrotask(() => call("onReady"));
       return { unmount };
     }),
     tokenize: vi.fn(() => {
       queueMicrotask(() => (fail ? call("onError", fail) : call("onSuccess", token)));
     }),
+    updateTheme: vi.fn(),
+    resetCardInputs: vi.fn(),
   };
   window.CardSDK = sdk;
   return { sdk, unmount, state, call };

@@ -16,6 +16,9 @@ const fillCart = () =>
     cart.add(CART_PRODUCTS[1]);
   });
 
+/** the Pay button says the amount */
+const PAY = /^Pay QAR\s619\.50$/;
+
 /** "Try another card" on the return page links to /checkout?order=<id> */
 const visitWithOrder = (id: string) => window.history.replaceState(null, "", `/en/checkout?order=${id}`);
 
@@ -116,9 +119,11 @@ describe("checkout page", () => {
 
   it("walks phone → code → details → pay", async () => {
     fillCart();
-    stubCardSdk();
+    const { sdk } = stubCardSdk();
     const order = webOrder();
+    const fetched = vi.fn();
     server.use(
+      http.get(`/api/shop/orders/${ORDER_ID}`, () => (fetched(), HttpResponse.json(order))),
       http.post("/api/shop/otp", () => HttpResponse.json({ expiresAt: "2031-03-10T09:05:00.000Z", devCode: "482915" })),
       http.post("/api/shop/otp/verify", () => HttpResponse.json({ customer: customer({ name: null, email: null }), expiresAt: "2031-04-09T09:00:00.000Z" })),
       http.post("/api/shop/orders", () => HttpResponse.json({ ...order, replayed: false }, { status: 201 })),
@@ -141,8 +146,39 @@ describe("checkout page", () => {
     await user.click(screen.getByRole("button", { name: "Continue to payment" }));
 
     // pay step with the server's total
-    expect(await screen.findByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: PAY })).toBeInTheDocument();
     expect(screen.getAllByText(/QAR\s619\.50/).length).toBeGreaterThan(0);
+
+    // the order is in the address, so a reload or Back from the bank's page reopens this step...
+    expect(window.location.search).toBe(`?order=${ORDER_ID}`);
+    // ...without fetching it again or drawing Tap's form twice now
+    await waitFor(() => expect(sdk.renderTapCard).toHaveBeenCalledTimes(1));
+    expect(fetched).not.toHaveBeenCalled();
+    expect(screen.queryByText("Loading the secure card form…")).not.toBeInTheDocument();
+  });
+
+  it("takes the order out of the address when it expired and the customer goes back to the details", async () => {
+    fillCart();
+    stubCardSdk();
+    setCustomerHint(true);
+    server.use(
+      http.get("/api/shop/me", () => HttpResponse.json(customer({ name: null, email: null }))),
+      http.post("/api/shop/orders", () => HttpResponse.json({ ...webOrder(), replayed: false }, { status: 201 })),
+      http.post(`/api/shop/orders/${ORDER_ID}/pay`, () => apiError(409, "ORDER_NOT_PAYABLE")),
+    );
+    const { user } = renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
+    await user.type(await screen.findByLabelText("Full name"), "Sara Ali");
+    await user.type(screen.getByLabelText("Email"), "sara@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue to payment" }));
+    const pay = await screen.findByRole("button", { name: PAY });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await user.click(pay);
+
+    await user.click(await screen.findByRole("button", { name: "Back to your details" }));
+    // a new customer's name and email are still there for the new order
+    expect(await screen.findByLabelText("Full name")).toHaveValue("Sara Ali");
+    expect(screen.getByLabelText("Email")).toHaveValue("sara@example.com");
+    expect(window.location.search).toBe("");
   });
 
   it("never shows the development code on a production build", async () => {
@@ -200,7 +236,7 @@ describe("checkout page", () => {
     );
     renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
 
-    expect(await screen.findByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: PAY })).toBeInTheDocument();
     expect(screen.getAllByText(/QAR\s619\.50/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Signed in as/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
@@ -218,8 +254,10 @@ describe("checkout page", () => {
     renderOnSite(<Checkout publicKey="pk_test_wolfcar" />);
 
     expect(await screen.findByLabelText("Full name")).toHaveValue("Sara Ali");
-    expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PAY })).not.toBeInTheDocument();
     expect(router.replace).not.toHaveBeenCalled();
+    // a reload now starts a new order instead of finding the expired one again
+    expect(window.location.search).toBe("");
   });
 
   // controller ruling (b): nothing is left to pay, so no new checkout starts for it
@@ -239,7 +277,7 @@ describe("checkout page", () => {
 
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/checkout/return?order=${ORDER_ID}`));
     expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PAY })).not.toBeInTheDocument();
   });
 
   // controller ruling (a): the return page sends a customer whose session is gone to /checkout?order=<id>
@@ -260,7 +298,7 @@ describe("checkout page", () => {
     await user.click(screen.getByRole("button", { name: "Send code" }));
     await user.type(await screen.findByLabelText("Verification code"), "482915");
 
-    expect(await screen.findByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: PAY })).toBeInTheDocument();
     expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
     expect(created).not.toHaveBeenCalled();
   });

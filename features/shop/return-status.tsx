@@ -89,6 +89,8 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       if (!live) return;
       seen = true;
       const outcome = outcomeOf(o);
+      // kept while the bank is still deciding too: the waiting view shows its code
+      setOrder(o);
       if (outcome === null) return next();
       // the money was taken either way: the order's products are bought, but only a paid order counts as a sale.
       // Only those leave the basket: unpriced lines (for WhatsApp) and anything added since stay
@@ -100,7 +102,6 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
         saleReported.current = true;
         if (firstTimeInTab("paid", o.id)) track("order_paid");
       }
-      setOrder(o);
       setView(outcome);
     };
     const fail = (e: unknown) => {
@@ -176,20 +177,32 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
     case "notPaid":
       icon = <CircleX className="size-7 shrink-0 text-danger" aria-hidden="true" />;
       headline = t("notPaid");
+      // no order code here: it is what the branch hands parts over for, and nothing was paid
       body = (
-        <Actions>
-          {/* back to the pay step of this same order, never a second order */}
-          <Link href={`/checkout?order=${orderId}`} className={cn(buttonVariants({ size: "lg" }))}>
-            {t("tryAgain")}
-          </Link>
-          {backToProducts("outline")}
-        </Actions>
+        <>
+          <Actions>
+            {/* back to the pay step of this same order, never a second order */}
+            <Link href={`/checkout?order=${orderId}`} className={cn(buttonVariants({ size: "lg" }))}>
+              {t("tryAgain")}
+            </Link>
+            {backToProducts("outline")}
+          </Actions>
+        </>
       );
+      after = <PickupBranch locale={locale} />;
       break;
     case "expired":
       icon = <CircleAlert className="size-7 shrink-0 text-danger" aria-hidden="true" />;
       headline = t("expired");
-      body = <Actions>{backToProducts("default")}</Actions>;
+      // the basket is still there: the checkout makes a new order from it
+      body = (
+        <Actions>
+          <Link href="/checkout" className={cn(buttonVariants({ size: "lg" }))}>
+            {t("backToCheckout")}
+          </Link>
+          {backToProducts("outline")}
+        </Actions>
+      );
       break;
     case "refunded":
       icon = <CircleAlert className="size-7 shrink-0 text-muted" aria-hidden="true" />;
@@ -197,9 +210,26 @@ export function ReturnStatus({ orderId }: ReturnStatusProps) {
       body = <Actions>{backToProducts("default")}</Actions>;
       break;
     case "waiting":
+      icon = <Clock className="size-7 shrink-0 text-muted" aria-hidden="true" />;
+      headline = t("stillPending");
+      // a second payment now could charge twice: the order settles by itself once the bank answers
+      body = (
+        <>
+          {order && <OrderCode code={order.code} />}
+          <p className="text-[15px] font-semibold text-ink-2">{t("dontPayAgain")}</p>
+          <Actions>
+            <Button type="button" size="lg" onClick={checkAgain}>
+              {t("checkAgain")}
+            </Button>
+            {backToProducts("outline")}
+          </Actions>
+        </>
+      );
+      after = <PickupBranch locale={locale} />;
+      break;
     case "error":
       icon = <CircleAlert className="size-7 shrink-0 text-muted" aria-hidden="true" />;
-      headline = view === "waiting" ? t("stillPending") : t("errors.generic");
+      headline = t("errors.generic");
       body = (
         <Actions>
           <Button type="button" size="lg" onClick={checkAgain}>

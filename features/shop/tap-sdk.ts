@@ -9,6 +9,10 @@ export interface TapToken {
 export interface CardSdk {
   renderTapCard(containerId: string, config: Record<string, unknown>): { unmount(): void };
   tokenize(): void;
+  /** restyles the form in place, keeping what was typed */
+  updateTheme?(theme: "light" | "dark"): void;
+  /** empties the number, expiry, CVV and name; Tap does not report the emptied form */
+  resetCardInputs?(): void;
   Currencies?: Record<string, string>;
 }
 

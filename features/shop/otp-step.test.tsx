@@ -66,6 +66,28 @@ describe("checkout: code step", () => {
     expect(tried).toHaveLength(2);
   });
 
+  it("empties the boxes after a wrong code and gives focus back, so the next code is typed from the start", async () => {
+    const tried = listenForVerify((code) =>
+      code === "482915" ? HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" }) : apiError(401, "OTP_INVALID"),
+    );
+    const p = props();
+    const { user } = renderOnSite(<OtpStep {...p} />);
+    const input = screen.getByLabelText("Verification code");
+
+    await user.type(input, "000000");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the message and try again.");
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(input).toHaveValue("");
+
+    // typed straight away, without clearing anything: one check for the new code, no extra wrong try
+    await user.keyboard("482915");
+    await waitFor(() => expect(p.onVerified).toHaveBeenCalledTimes(1));
+    expect(tried).toEqual([
+      { phone: PHONE, code: "000000" },
+      { phone: PHONE, code: "482915" },
+    ]);
+  });
+
   it("explains a code that was guessed too often", async () => {
     listenForVerify(() => apiError(429, "OTP_TOO_MANY", { retryAfterSeconds: 600 }));
     const { user } = renderOnSite(<OtpStep {...props()} />);

@@ -122,6 +122,8 @@ describe("checkout return page", () => {
     renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
     expect(await screen.findByText("This order has expired. Go back to review your cart and try again.")).toBeInTheDocument();
     expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
+    // the basket is still there: the checkout makes a new order from it
+    expect(screen.getByRole("link", { name: "Back to checkout" })).toHaveAttribute("href", "/checkout");
   });
 
   it("says an order the sweep cancelled expired, and stops polling", async () => {
@@ -212,8 +214,12 @@ describe("checkout return page", () => {
 
     for (let elapsed = 0; elapsed <= CHECKOUT_POLL_MAX_MS; elapsed += CHECKOUT_POLL_MS) await tick(CHECKOUT_POLL_MS);
     expect(await screen.findByText("We're still waiting for the bank to confirm your payment. Check again in a minute.")).toBeInTheDocument();
-    // no answer is not a refusal: nothing invites a second payment
+    // no answer is not a refusal: nothing invites a second payment, and the page says not to make one
     expect(screen.queryByRole("link", { name: "Try another card" })).not.toBeInTheDocument();
+    expect(screen.getByText("Please don't pay again. We'll confirm your order as soon as the bank does.")).toBeInTheDocument();
+    // the code and the branch, for a customer who calls about it
+    expect(screen.getByText("BO-000001")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Call/ })).toBeInTheDocument();
     expect(storedCart()).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Check again" }));

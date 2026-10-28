@@ -66,6 +66,12 @@ describe("checkout state: the order of steps", () => {
     expect(next.customer).toEqual(customer());
   });
 
+  it("a created order keeps the name and email it was made with, for going back to the details", () => {
+    const order = webOrder({ customer: { name: "Sara Ali", email: "sara@example.com", phone: "+97455123456" } });
+    const next = reduce(frozen(state({ step: "details", customer: customer({ name: null, email: null }) })), { type: "ORDER_CREATED", order });
+    expect(next.customer).toMatchObject({ name: "Sara Ali", email: "sara@example.com" });
+  });
+
   it("back to the details drops the order (an expired one cannot be paid)", () => {
     const next = reduce(frozen(state({ step: "pay", customer: customer(), order: webOrder() })), { type: "BACK_TO_DETAILS" });
     expect(next.step).toBe("details");

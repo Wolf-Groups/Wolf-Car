@@ -49,7 +49,13 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
   const seconds = useSecondsLeft(resendAt);
+
+  // the input is disabled while a code is checked, which takes focus away: give it back after a refusal
+  useEffect(() => {
+    if (!busy && error) input.current?.focus();
+  }, [busy, error]);
 
   const verify = async (value: string) => {
     if (working.current) return;
@@ -61,6 +67,8 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
       onVerified(res.customer);
     } catch (err) {
       setError(message(err));
+      // typed again from the first box: kept digits would turn the next keystroke into another wrong try (5 per code)
+      setCode("");
     } finally {
       working.current = false;
       setBusy(false);
@@ -93,6 +101,7 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
       <div className="flex">
         <div dir="ltr">
           <InputOTP
+            ref={input}
             maxLength={OTP_LENGTH}
             value={code}
             onChange={(next) => {
