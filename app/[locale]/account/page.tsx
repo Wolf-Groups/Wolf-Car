@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { hasLocale } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
-import { Wrap } from "@/components/Button";
-import { Footer } from "@/components/Footer";
-import { SubpageHeader } from "@/components/SubpageHeader";
+import { PublicPage } from "@/components/PublicPage";
 import { Account } from "@/features/account/account";
 import { routing } from "@/i18n/routing";
 
@@ -25,17 +23,9 @@ export default async function AccountPage({ params }: { params: Promise<{ locale
   setRequestLocale(locale);
   const t = await getTranslations("Account");
   return (
-    <>
-      <SubpageHeader />
-      <main id="main" className="bg-sand pt-6 pb-24 lg:pt-8">
-        <Wrap>
-          <div className="mx-auto grid w-full max-w-2xl gap-5">
-            <h1 className="text-[clamp(26px,5vw,34px)] leading-tight font-extrabold">{t("title")}</h1>
-            <Account />
-          </div>
-        </Wrap>
-      </main>
-      <Footer />
-    </>
+    <PublicPage>
+      <h1 className="text-[clamp(26px,5vw,34px)] leading-tight font-extrabold">{t("title")}</h1>
+      <Account />
+    </PublicPage>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, type LucideIcon, PackageOpen, PackageSearch, UserRound } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -24,6 +24,28 @@ export const displayPhone = (e164: string) => {
 
 export const Skeleton = () => <div aria-busy="true" className="h-56 animate-pulse rounded-[var(--radius-brand-lg)] border border-line bg-surface" />;
 
+/** A section heading of the account page, with its icon in the brand colour. */
+export function SectionTitle({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
+  return (
+    <h2 className="flex items-center gap-2 text-xl font-extrabold">
+      <Icon aria-hidden="true" className="size-5 shrink-0 text-accent-ink" />
+      {children}
+    </h2>
+  );
+}
+
+/** A card for a section with nothing in it yet (or that failed): icon, a line or two, and the one thing to do. */
+export function EmptyState({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
+  return (
+    <div className="grid justify-items-center gap-3 rounded-[var(--radius-brand-lg)] border border-line bg-surface px-5 py-8 text-center">
+      <span aria-hidden="true" className="grid size-14 place-items-center rounded-full bg-sand text-ink-2">
+        <Icon className="size-7" />
+      </span>
+      {children}
+    </div>
+  );
+}
+
 /** /account: sign in with the phone code, then the customer's number, sign out and their orders. */
 export function Account() {
   const t = useTranslations("Account");
@@ -40,12 +62,16 @@ export function Account() {
   };
 
   return (
-    <div className="grid gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-brand-lg)] border border-line bg-surface px-5 py-4">
-        <p className="text-[15px] font-semibold text-ink-2">
+    <div className="grid gap-6">
+      <div className="flex flex-wrap items-center gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5">
+        <span aria-hidden="true" className="grid size-12 shrink-0 place-items-center rounded-full bg-accent/10 text-accent-ink">
+          <UserRound className="size-6" />
+        </span>
+        <p className="min-w-0 flex-1 basis-48 text-[15px] font-semibold text-ink-2">
           {t("signedInAs", { phone: displayPhone(session.customer.phone) })}
         </p>
-        <Button variant="outline" onClick={() => void signOut()} disabled={signingOut}>
+        {/* a full-width button under the number on narrow screens, beside it otherwise */}
+        <Button variant="outline" onClick={() => void signOut()} disabled={signingOut} className="w-full sm:w-auto">
           {t("signOut")}
         </Button>
       </div>
@@ -77,25 +103,25 @@ function OrdersList() {
 
   return (
     <section className="grid gap-3">
-      <h2 className="text-xl font-extrabold">{t("ordersTitle")}</h2>
+      <SectionTitle icon={PackageSearch}>{t("ordersTitle")}</SectionTitle>
       {failed ? (
-        <div className="grid justify-items-start gap-3 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5">
+        <EmptyState icon={PackageSearch}>
           <p role="alert" className="text-[15px] text-ink-2">
             {t("ordersError")}
           </p>
           <Button variant="outline" onClick={() => void load()}>
             {t("retry")}
           </Button>
-        </div>
+        </EmptyState>
       ) : orders === null ? (
         <Skeleton />
       ) : orders.length === 0 ? (
-        <div className="grid justify-items-start gap-3 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5">
-          <p className="text-[15px] text-ink-2">{t("ordersEmpty")}</p>
-          <Link href="/products" className={cn(buttonVariants({ size: "lg" }))}>
+        <EmptyState icon={PackageOpen}>
+          <p className="text-[15px] font-semibold">{t("ordersEmpty")}</p>
+          <Link href="/products" className={cn(buttonVariants())}>
             {t("browseProducts")}
           </Link>
-        </div>
+        </EmptyState>
       ) : (
         <ul className="grid gap-3">
           {orders.map((order) => (

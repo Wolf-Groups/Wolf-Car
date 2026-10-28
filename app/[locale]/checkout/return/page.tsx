@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { hasLocale } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
-import { Wrap } from "@/components/Button";
-import { Footer } from "@/components/Footer";
-import { SubpageHeader } from "@/components/SubpageHeader";
+import { PublicPage } from "@/components/PublicPage";
 import { ReturnStatus } from "@/features/shop/return-status";
 import { ORDER_ID_PATTERN } from "@/features/shop/shop-api";
 import { routing } from "@/i18n/routing";
@@ -34,14 +32,8 @@ export default async function CheckoutReturnPage({
   setRequestLocale(locale);
   if (typeof order !== "string" || !ORDER_ID_PATTERN.test(order)) notFound();
   return (
-    <>
-      <SubpageHeader />
-      <main id="main" className="bg-sand pt-6 pb-24 lg:pt-8">
-        <Wrap>
-          <ReturnStatus orderId={order} />
-        </Wrap>
-      </main>
-      <Footer />
-    </>
+    <PublicPage width="xl">
+      <ReturnStatus orderId={order} />
+    </PublicPage>
   );
 }

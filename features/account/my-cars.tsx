@@ -1,6 +1,6 @@
 "use client";
 
-import { Check } from "lucide-react";
+import { Car, Check } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
@@ -10,6 +10,7 @@ import { shop } from "@/features/shop/shop-api";
 import { Link } from "@/i18n/navigation";
 import type { CustomerCar, PublicCategory } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { EmptyState, SectionTitle } from "./account";
 
 /** The API keeps at most this many (CUSTOMER_CARS_MAX). */
 export const CARS_MAX = 5;
@@ -35,7 +36,7 @@ export function MyCars() {
   return (
     <section className="grid gap-3">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-extrabold">{t("carsTitle")}</h2>
+        <SectionTitle icon={Car}>{t("carsTitle")}</SectionTitle>
         {cars !== null && cars.length > 0 && !editing && (
           <Button variant="outline" onClick={() => setEditing(true)}>
             {t("editCars")}
@@ -54,11 +55,13 @@ export function MyCars() {
           onCancel={() => setEditing(false)}
         />
       ) : cars.length === 0 ? (
-        <div className="grid justify-items-start gap-3 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5">
-          <p className="text-[15px] text-ink-2">{t("carsEmpty")}</p>
-          <p className="text-[13px] text-ink-2">{t("carsIntro")}</p>
+        <EmptyState icon={Car}>
+          <div className="grid gap-1">
+            <p className="text-[15px] font-semibold">{t("carsEmpty")}</p>
+            <p className="text-[14px] text-ink-2">{t("carsIntro")}</p>
+          </div>
           <Button onClick={() => setEditing(true)}>{t("addCars")}</Button>
-        </div>
+        </EmptyState>
       ) : (
         <ul className="flex flex-wrap gap-2.5">
           {cars.map((car) => (

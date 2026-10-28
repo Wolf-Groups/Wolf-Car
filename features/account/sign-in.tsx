@@ -1,5 +1,6 @@
 "use client";
 
+import { Smartphone } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { OtpStep } from "@/features/shop/otp-step";
@@ -22,10 +23,15 @@ export function SignIn({ onSignedIn }: SignInProps) {
   const [devCode, setDevCode] = useState<string>();
 
   return (
-    <section className="grid gap-4 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
-      <div className="grid gap-1">
-        <h2 className="text-xl font-extrabold">{t("signInTitle")}</h2>
-        <p className="text-[15px] text-ink-2">{t("signInIntro")}</p>
+    <section className="mx-auto grid w-full max-w-md gap-5 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">
+      <div className="grid gap-3">
+        <span aria-hidden="true" className="grid size-12 place-items-center rounded-full bg-accent/10 text-accent-ink">
+          <Smartphone className="size-6" />
+        </span>
+        <div className="grid gap-1">
+          <h2 className="text-xl font-extrabold">{t("signInTitle")}</h2>
+          <p className="text-[15px] text-ink-2">{t("signInIntro")}</p>
+        </div>
       </div>
       {phone === null ? (
         <PhoneStep
