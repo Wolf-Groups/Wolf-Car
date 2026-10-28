@@ -131,6 +131,24 @@ describe("Tap card: a tokenize Tap does not answer never hangs", () => {
     expect(sdk.tokenize).toHaveBeenCalledTimes(1);
   });
 
+  it("reads Tap's flag: the real SDK calls both callbacks on every change, onInvalidInput last", async () => {
+    const { sdk, state, call } = stubCardSdk();
+    const { ref } = renderCard();
+    await waitFor(() => expect(state.config).not.toBeNull());
+
+    // seen in Tap's sandbox (card SDK 1.0.2) while the card is incomplete...
+    call("onValidInput", false);
+    call("onInvalidInput", true);
+    await expect(ref.current!.tokenize()).rejects.toThrow(TAP_CARD_INVALID);
+    expect(sdk.tokenize).not.toHaveBeenCalled();
+
+    // ...and once it is complete
+    call("onValidInput", true);
+    call("onInvalidInput", false);
+    await expect(ref.current!.tokenize()).resolves.toMatchObject({ id: "tok_fake_ok" });
+    expect(sdk.tokenize).toHaveBeenCalledTimes(1);
+  });
+
   it("gives up after TOKENIZE_TIMEOUT_MS (30 s) and ignores Tap's late answer", async () => {
     expect(TOKENIZE_TIMEOUT_MS).toBe(30_000);
     const { sdk, state, call } = stubCardSdk();
