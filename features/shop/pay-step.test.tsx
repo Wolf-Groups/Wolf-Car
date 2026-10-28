@@ -44,7 +44,7 @@ describe("checkout: pay step", () => {
     expect(screen.getAllByText(/QAR\s619\.50/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Collect from .*Bin Omran/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Card details" })).toBeInTheDocument();
-    expect(screen.getByText(/Enter the card number, then the expiry date \(MM\/YY\), then the 3-digit security code/)).toBeInTheDocument();
+    expect(screen.getByText(/Enter the card number, then the expiry date \(MM⁠?\/⁠?YY\), then the 3-digit security code/)).toBeInTheDocument();
     expect(screen.getByText("We accept Visa and Mastercard.")).toBeInTheDocument();
     expect(screen.getByText(/Secure payment through Tap; your card details never reach our servers/)).toBeInTheDocument();
     await waitFor(() => expect(sdk.renderTapCard).toHaveBeenCalledWith("tap-card-sdk", expect.objectContaining({ publicKey: "pk_test_wolfcar" })));

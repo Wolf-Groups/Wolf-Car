@@ -233,7 +233,7 @@
     "payAmount": "Pay {amount}",
     "payNote": "Secure payment through Tap; your card details never reach our servers. Your bank may ask you for a verification code to confirm.",
     "cardTitle": "Card details",
-    "cardHint": "Enter the card number, then the expiry date (MM/YY), then the 3-digit security code. Type the cardholder name in English letters, as printed on the card.",
+    "cardHint": "Enter the card number, then the expiry date (MM⁠/⁠YY), then the 3-digit security code. Type the cardholder name in English letters, as printed on the card.",
     "cardLoading": "Loading the secure card form…",
     "cardLoadFailed": "The card form couldn't load. Check your connection and try again, or order on WhatsApp.",
     "reloadCard": "Reload the card form",
