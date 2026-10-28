@@ -85,11 +85,13 @@ export const TapCard = forwardRef<TapCardHandle, TapCardProps>(function TapCard(
           onReady: () => {
             if (active) callbacks.current.onReady?.();
           },
-          onValidInput: () => {
-            if (active) valid.current = true;
+          // Tap calls both on every change with a flag, onInvalidInput last: (false, true) while
+          // the card is incomplete, (true, false) once it is complete
+          onValidInput: (isValid?: boolean) => {
+            if (active && isValid !== false) valid.current = true;
           },
-          onInvalidInput: () => {
-            if (!active) return;
+          onInvalidInput: (isInvalid?: boolean) => {
+            if (!active || isInvalid === false) return;
             valid.current = false;
             settle(pending, { error: TAP_CARD_INVALID });
           },
