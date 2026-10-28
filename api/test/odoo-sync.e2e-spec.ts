@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -25,6 +25,7 @@ class FakeOdoo implements OdooReader {
         { id: 5, complete_name: 'Car', parent_id: false },
         { id: 7, complete_name: 'Car / E2EBRAND', parent_id: [5, 'Car'] },
         { id: 23, complete_name: 'Car / E2EBRAND / E2EMODEL', parent_id: [7, 'Car / E2EBRAND'] },
+        { id: 24, complete_name: 'Car / E2EBRAND / E2EPHOTO', parent_id: [7, 'Car / E2EBRAND'] },
       ] as T[]);
     }
     return Promise.resolve([]);
@@ -68,7 +69,7 @@ describe('Odoo catalogue sync (e2e)', () => {
     world = await seedWorld(t.prisma);
     admin = (await login(t, 'admin', PW.admin)).token;
     uploadDir = await mkdtemp(path.join(tmpdir(), 'wolfcar-odoo-'));
-    await t.prisma.category.deleteMany({ where: { odooId: { in: [7, 23] } } });
+    await t.prisma.category.deleteMany({ where: { odooId: { in: [7, 23, 24] } } });
     odoo = new FakeOdoo();
     odoo.variants = [
       variant({ id: 1 }),
@@ -81,7 +82,7 @@ describe('Odoo catalogue sync (e2e)', () => {
     odoo.images.set(1, (await sharp({ create: { width: 40, height: 40, channels: 3, background: '#cc0000' } }).png().toBuffer()).toString('base64'));
   });
   afterAll(async () => {
-    await t.prisma.category.deleteMany({ where: { odooId: { in: [7, 23] } } });
+    await t.prisma.category.deleteMany({ where: { odooId: { in: [7, 23, 24] } } });
     await rm(uploadDir, { recursive: true, force: true });
     await t.close();
   });
@@ -158,6 +159,25 @@ describe('Odoo catalogue sync (e2e)', () => {
     odoo.variants[3] = { ...odoo.variants[3], active: true };
     expect(await run()).toMatchObject({ updated: 1 });
     expect((await byOdooId(4)).isActive).toBe(true);
+  });
+
+  it('gives a new car its photo from the repository, and a name tile when there is none', async () => {
+    const photos = await mkdtemp(path.join(tmpdir(), 'wolfcar-category-images-'));
+    await writeFile(path.join(photos, 'e2ephoto.jpg'), await sharp({ create: { width: 300, height: 200, channels: 3, background: '#cc0000' } }).jpeg().toBuffer());
+    odoo.variants.push(variant({ id: 6, display_name: 'Roof rack', arabic_name: 'شبك سقف', product_tmpl_id: [600, 'Roof rack'], barcode: '900006', categ_id: [24, 'Car / E2EBRAND / E2EPHOTO'] }));
+    odoo.templateDates.set(600, '2026-10-04 08:00:00');
+    try {
+      expect(await syncOdooCatalogue(t.prisma, odoo, { uploadDir, categoryImagesDir: photos })).toMatchObject({ created: 1 });
+    } finally {
+      await rm(photos, { recursive: true, force: true });
+    }
+    const size = async (odooId: number) => {
+      const { imageKey } = await t.prisma.category.findUniqueOrThrow({ where: { odooId } });
+      const { width, height } = await sharp(path.join(uploadDir, `${imageKey}.webp`)).metadata();
+      return [width, height];
+    };
+    expect(await size(24)).toEqual([300, 200]); // the photo, as it is
+    expect(await size(23)).toEqual([1200, 800]); // the tile
   });
 
   it('writes nothing when Odoo cannot be read', async () => {
