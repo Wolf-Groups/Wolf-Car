@@ -22,6 +22,8 @@ plan: `docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README sectio
 - Card orders: before the expiry sweep cancels an unpaid card order it asks Tap about the payment. A customer who
   paid and closed the page before coming back (and whose webhook never came) gets a paid order and the receipt,
   not a cancelled one. Checked against Tap's sandbox on 2026-11-04.
+- Every page of the website now sends HSTS (`max-age=31536000; includeSubDomains`, as the API already did) and
+  `X-Content-Type-Options: nosniff`, and no longer says `X-Powered-By: Next.js`.
 - DB migration `20261104100000_email_customers`: email becomes the customer identity. **Irreversible**: drops the
   phone unique index, deletes all `customer_otps`, lower-cases and de-duplicates customer emails.
 
@@ -50,6 +52,7 @@ Safe to add before the new code is deployed (the running version ignores them). 
 - [ ] `EMAIL_FROM_NAME=Wolf Car`
 - [ ] `SHOP_NOTIFY_EMAIL=<call center email>,<manager email>` (who hears about every new website order)
 - [ ] Check `TRUST_PROXY=loopback, uniquelocal` is there (per-visitor rate limits depend on it).
+- [ ] Remove `http://localhost:3000` from `CORS_ORIGINS` (the template still lists it; production does not need it).
 - Optional clean-up: remove `SMS_PROVIDER` and `OTP_PER_PHONE_PER_15_MIN` (no longer read).
 
 ## 3. Deploy
@@ -69,7 +72,28 @@ Safe to add before the new code is deployed (the running version ignores them). 
 3. [ ] Sign in as a call center user → Orders → *Website orders* shows it → Confirm. Then as the Bin Omran cashier →
        Mark collected. Then cancel your test orders.
 4. [ ] Showroom page on a phone (2 per row) and on the big screen.
-5. [ ] Logs if anything is off: `cd /opt/wolfcar/app && docker compose -f compose.prod.yml logs api --since 15m | grep -iE "email|brevo|sign-in|error"`.
+5. [ ] Headers: `curl -sI https://wolfcar.qa/ar` shows `strict-transport-security` and no `x-powered-by`.
+6. [ ] Logs if anything is off: `cd /opt/wolfcar/app && docker compose -f compose.prod.yml logs api --since 15m | grep -iE "email|brevo|sign-in|error"`.
+
+## Security checks done on 2026-11-04 (this branch, local copy)
+
+- **Code review** of the whole branch (security only): no exploitable finding. Checked: guest order keys (HMAC,
+  constant-time, bound to the order), customer cookie scope, a guest using someone else's email (no session, no
+  change to that customer, sees only their own order), email codes (random, bound to the email, 5 guesses per code,
+  single use), test-only switches refused in production, email HTML escaping, the webhook signature, the expiry
+  sweep, the call center permission (website orders only, no refund of a paid card order), CSRF, the migration SQL.
+- **Attacks on the running API** (59 tries): all refused or handled correctly. Price/total/payment-status tampering,
+  bad quantities, foreign mobiles, header breaks in the email, HTML in the name; another order's key (whole,
+  one character changed, shortened, upper-cased, in the URL); guest keys and customer cookies on staff routes;
+  forged and unsigned webhooks; wrong-code guessing, a code used for another email or used twice; CORS from a
+  foreign origin; no stack traces, internal ids or secrets in answers. Rate limit: 10 a minute per visitor on
+  placing orders and on sign-in codes.
+- **Live site** (read only): no `/.env`, `/.git`, docs or metrics exposed; http redirects to https; Tap's webhook
+  route answers from the internet (`503` while card payments are off), so Tap will reach it.
+- [ ] **Library updates** (`npm audit`, nothing reachable here today, worth doing before card payments go live):
+      `next` 16.3.5 → 16.4.5 (critical advisory in `next/og`, which the site does not use), `sharp` → 0.35.5 (SVG
+      decoding; uploads accept only JPEG/PNG/WebP), `zod` → 4.6.7, `prisma` → 7.10.1, `@nestjs/platform-express`
+      → 12.3.3 (denial-of-service fixes). Run the full test suites after.
 
 ## 5. Still open from before (not blocking this deploy)
 
@@ -79,8 +103,9 @@ Safe to add before the new code is deployed (the running version ignores them). 
       receipt email, refund from the dashboard (`REFUNDED`), Tap refuses a second refund. The 3-D Secure challenge cards
       (`4508750015741019`, `5123450000000008`) still end in `701 RESTRICTED`: ask Tap (Ramy) whether real cards that
       get a bank challenge will be refused like this with live keys (questions in README section 11).
-- [ ] **Tap's webhook** is still untested (Tap must reach the API from the internet; this Mac had no tunnel). Either
-      test it locally with a tunnel (README section 11, "Run it locally with Tap test keys"), or after the first live
+- [ ] **Tap's webhook** is still untested end to end (Tap must reach the API from the internet; Claude's safety check
+      refuses to open a tunnel on its own). The signature check matches Tap's documented formula. Either test it
+      locally with a tunnel the owner opens (README section 11, "Run it locally with Tap test keys"), or after the first live
       payment check the activity log for `shop.payment.webhook` (outcome *paid* / *already_paid*), not only
       `shop.order.reconcile`. A `401 BAD_SIGNATURE` in the API log on that route means the hashstring check is off.
 - [ ] **SSH hardening**: port 22 is still public; run `deploy/harden-ssh.sh` as in README "Server access (SSH)".
