@@ -82,26 +82,31 @@ const MATRIX: Record<string, Caller[] | { public: number }> = {
   'GET /api/showroom/products': ['kiosk'],
   'POST /api/showroom/orders': ['kiosk'],
 
-  'GET /api/orders': ['admin', 'finance', 'manager', 'cashier'],
-  'GET /api/orders/:id': ['admin', 'finance', 'manager', 'cashier'],
+  'GET /api/orders': ['admin', 'finance', 'manager', 'cashier', 'reservations'],
+  'GET /api/orders/:id': ['admin', 'finance', 'manager', 'cashier', 'reservations'],
   'PATCH /api/orders/:id': ['admin', 'cashier'],
-  'POST /api/orders/:id/confirm': ['admin', 'cashier'],
-  'POST /api/orders/:id/cancel': ['admin', 'cashier'],
-  'GET /api/orders/:id/receipt': ['admin', 'cashier'],
-  'POST /api/orders/:id/collect': ['admin', 'cashier'],
+  // the call center handles the website's orders (order.web.handle)
+  'POST /api/orders/:id/confirm': ['admin', 'cashier', 'reservations'],
+  'POST /api/orders/:id/cancel': ['admin', 'cashier', 'reservations'],
+  'GET /api/orders/:id/receipt': ['admin', 'cashier', 'reservations'],
+  'POST /api/orders/:id/collect': ['admin', 'cashier', 'reservations'],
   'POST /api/orders/:id/odoo/retry': ['admin', 'finance'],
 
   // the website's customers: no bearer token of any kind opens these, only the customer cookie
   'POST /api/shop/otp': ALL,
   'POST /api/shop/otp/verify': ALL,
   'GET /api/shop/me': { public: 401 },
+  'GET /api/shop/me/cars': { public: 401 },
+  'PUT /api/shop/me/cars': { public: 401 },
   'POST /api/shop/logout': { public: 401 },
   'POST /api/shop/logout-all': { public: 401 },
-  'POST /api/shop/orders': { public: 401 },
-  'GET /api/shop/orders/:id': { public: 401 },
-  'POST /api/shop/orders/:id/cancel': { public: 401 },
-  'POST /api/shop/orders/:id/pay': { public: 401 },
-  'POST /api/shop/orders/:id/reconcile': { public: 401 },
+  // a guest may order and reach an order by its key: the empty body is refused, a random id without a key is not found
+  'POST /api/shop/orders': { public: 400 },
+  'GET /api/shop/orders': { public: 401 },
+  'GET /api/shop/orders/:id': { public: 404 },
+  'POST /api/shop/orders/:id/cancel': { public: 404 },
+  'POST /api/shop/orders/:id/pay': { public: 400 },
+  'POST /api/shop/orders/:id/reconcile': { public: 404 },
   'POST /api/shop/payments/tap/webhook': { public: 401 }, // empty body has no signature
 
   'GET /api/ppf/calendar': ['admin', 'reservations'],

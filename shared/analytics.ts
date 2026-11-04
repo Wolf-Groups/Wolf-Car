@@ -19,6 +19,8 @@ export const SITE_EVENT_TYPES = [
   'checkout_start',
   /** the return page confirmed a paid order */
   'order_paid',
+  /** the thank-you page of an order placed to pay at the branch */
+  'order_placed',
 ] as const;
 export type SiteEventType = (typeof SITE_EVENT_TYPES)[number];
 

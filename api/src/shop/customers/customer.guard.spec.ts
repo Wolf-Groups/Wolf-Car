@@ -7,7 +7,7 @@ import type { AppRequest } from '../../common/types';
 import { CustomerGuard, type CustomerRequest } from './customer.guard';
 import type { CustomerPrincipal, CustomersService } from './customers.service';
 
-const principal: CustomerPrincipal = { id: 'c-1', phone: '+97455123456', name: 'Sara', email: 'sara@example.qa', sessionVersion: 2 };
+const principal: CustomerPrincipal = { id: 'c-1', email: 'sara@example.qa', name: 'Sara', phone: '+97455123456', sessionVersion: 2 };
 
 const context = (method: string, headers: Record<string, string> = {}, cookies: Record<string, string> = { wc_cst: 'cookie-token' }) =>
   httpContext({ method, headers, cookies } as Partial<AppRequest>);
@@ -28,7 +28,7 @@ describe('CustomerGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(customers.loadFromToken).toHaveBeenCalledWith('cookie-token');
     expect(ctx.switchToHttp().getRequest<CustomerRequest>().customer).toBe(principal);
-    expect(trail.setActor).toHaveBeenCalledWith({ id: null, username: '+97455123456', role: null, branchId: null });
+    expect(trail.setActor).toHaveBeenCalledWith({ id: null, username: 'sara@example.qa', role: null, branchId: null });
   });
 
   it('lets a GET through without the CSRF header', async () => {

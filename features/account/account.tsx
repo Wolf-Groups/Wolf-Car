@@ -10,17 +10,10 @@ import { Link } from "@/i18n/navigation";
 import type { WebOrder } from "@/lib/api/types";
 import { formatDate, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { localQatarNumber } from "@/shared/shop";
 import { MyCars } from "./my-cars";
 import { orderState } from "./order-state";
 import { SignIn } from "./sign-in";
 import { StateBadge } from "./state-badge";
-
-/** "+97455123456" → "+974 5512 3456", isolated left-to-right so Arabic text around it cannot reorder it */
-export const displayPhone = (e164: string) => {
-  const local = localQatarNumber(e164);
-  return `⁦+974 ${local.slice(0, 4)} ${local.slice(4)}⁩`;
-};
 
 export const Skeleton = () => <div aria-busy="true" className="h-56 animate-pulse rounded-[var(--radius-brand-lg)] border border-line bg-surface" />;
 
@@ -46,7 +39,7 @@ export function EmptyState({ icon: Icon, children }: { icon: LucideIcon; childre
   );
 }
 
-/** /account: sign in with the phone code, then the customer's number, sign out and their orders. */
+/** /account: sign in with the email code, then who is signed in, sign out, their cars and their orders. */
 export function Account() {
   const t = useTranslations("Account");
   const session = useCustomer();
@@ -68,7 +61,8 @@ export function Account() {
           <UserRound className="size-6" />
         </span>
         <p className="min-w-0 flex-1 basis-48 text-[15px] font-semibold text-ink-2">
-          {t("signedInAs", { phone: displayPhone(session.customer.phone) })}
+          {/* isolated left-to-right so Arabic text around it cannot reorder it */}
+          {t("signedInAs", { email: `\u2066${session.customer.email}\u2069` })}
         </p>
         {/* a full-width button under the number on narrow screens, beside it otherwise */}
         <Button variant="outline" onClick={() => void signOut()} disabled={signingOut} className="w-full sm:w-auto">

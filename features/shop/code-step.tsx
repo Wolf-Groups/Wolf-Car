@@ -1,30 +1,24 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import type { CustomerProfile } from "@/lib/api/types";
-import { localQatarNumber, OTP_LENGTH, OTP_RESEND_SECONDS } from "@/shared/shop";
+import { OTP_LENGTH, OTP_RESEND_SECONDS } from "@/shared/shop";
 import { shop } from "./shop-api";
 import { useCheckoutError } from "./use-checkout-error";
 
-export interface OtpStepProps {
-  phone: string;
+export interface CodeStepProps {
+  email: string;
   /** epoch ms when "Resend" becomes available; null means at once */
   resendAt: number | null;
   onVerified: (customer: CustomerProfile) => void;
-  onChangePhone: () => void;
+  onChangeEmail: () => void;
   onResent: (resendAt: number) => void;
   /** development only: the page passes it when the API echoed the code */
   devCode?: string;
 }
-
-/** "+97455123456" → "+974 5512 3456" */
-const display = (e164: string) => {
-  const local = localQatarNumber(e164);
-  return `+974 ${local.slice(0, 4)} ${local.slice(4)}`;
-};
 
 function useSecondsLeft(until: number | null): number {
   const [now, setNow] = useState(Date.now);
@@ -41,9 +35,10 @@ function useSecondsLeft(until: number | null): number {
   return until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
 }
 
-/** Step 2: the six-digit code, auto-submitted when full, with resend countdown and "change number". */
-export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, onResent }: OtpStepProps) {
+/** Signing in, step 2: the six-digit code from the email, auto-submitted when full, with resend countdown and "change email". */
+export function CodeStep({ email, resendAt, devCode, onVerified, onChangeEmail, onResent }: CodeStepProps) {
   const t = useTranslations("Checkout");
+  const locale = useLocale() === "ar" ? "ar" : "en";
   const message = useCheckoutError();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +58,7 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
     setError(null);
     setBusy(true);
     try {
-      const res = await shop.verifyOtp(phone, value);
+      const res = await shop.verifyCode(email, value);
       onVerified(res.customer);
     } catch (err) {
       setError(message(err));
@@ -81,7 +76,7 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
     setError(null);
     setBusy(true);
     try {
-      await shop.sendOtp(phone);
+      await shop.sendCode(email, locale);
       setCode("");
       onResent(Date.now() + OTP_RESEND_SECONDS * 1000);
     } catch (err) {
@@ -95,7 +90,7 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
   return (
     <div className="grid gap-4">
       <p className="text-[15px] text-ink-2">
-        {t("codeSentTo", { phone: `\u2066${display(phone)}\u2069` })}
+        {t("codeSentTo", { email: `\u2066${email}\u2069` })}
       </p>
       {/* digits run left-to-right, but the group sits at the start of the line like the other fields */}
       <div className="flex">
@@ -134,10 +129,10 @@ export function OtpStep({ phone, resendAt, devCode, onVerified, onChangePhone, o
         </Button>
         <button
           type="button"
-          onClick={onChangePhone}
+          onClick={onChangeEmail}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-accent-ink underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
-          {t("changeNumber")}
+          {t("changeEmail")}
         </button>
       </div>
     </div>

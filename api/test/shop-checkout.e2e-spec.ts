@@ -1,5 +1,6 @@
 import { FAKE_TOKENS } from '../../shared/shop';
 import { Prisma } from '../src/generated/prisma/client';
+import { EMAIL_SENDER, type EmailSender } from '../src/email/email-sender';
 import { CheckoutExpiryService } from '../src/shop/checkout/checkout-expiry.service';
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, csrf, login } from './utils/auth';
@@ -7,11 +8,13 @@ import { PW, seedWorld, type World } from './utils/fixtures';
 import {
   chargeIdOf,
   createWebOrder,
+  CUSTOMER_EMAIL,
   CUSTOMER_PHONE,
   defaultBasket,
   fakeGateway,
   getWebOrder,
-  OTHER_CUSTOMER_PHONE,
+  lastEmailTo,
+  OTHER_CUSTOMER_EMAIL,
   payWebOrder,
   reconcileWebOrder,
   SHOP_ENV,
@@ -20,7 +23,9 @@ import {
 } from './utils/shop';
 
 const MINUTE = 60_000;
-const RETURN_URL = (orderId: string, locale = 'en') => `${SHOP_ENV.WEB_PUBLIC_URL}/${locale}/checkout/return?order=${orderId}`;
+/** Tap sends the customer back here; the key lets a guest (or a lapsed session) see the order. */
+const RETURN_URL = (orderId: string, locale = 'en') =>
+  new RegExp(`^${SHOP_ENV.WEB_PUBLIC_URL}/${locale}/checkout/return\\?order=${orderId}&key=[A-Za-z0-9_-]{32}$`.replace(/\//g, '\\/'));
 
 describe('Online checkout (e2e)', () => {
   let t: TestApp;
@@ -29,22 +34,22 @@ describe('Online checkout (e2e)', () => {
   let other: string;
 
   beforeAll(async () => {
-    t = await createTestApp({ ...SHOP_ENV });
+    t = await createTestApp({ ...SHOP_ENV, SHOP_NOTIFY_EMAIL: 'shop@wolfcar.qa' });
   });
   beforeEach(async () => {
     world = await seedWorld(t.prisma);
-    sara = await signInCustomer(t, CUSTOMER_PHONE);
-    other = await signInCustomer(t, OTHER_CUSTOMER_PHONE);
+    sara = await signInCustomer(t, CUSTOMER_EMAIL);
+    other = await signInCustomer(t, OTHER_CUSTOMER_EMAIL);
   });
   afterAll(async () => {
     await t.close();
   });
 
   const create = (cookie = sara, over: Partial<ReturnType<typeof defaultBasket>> = {}, key?: string) => createWebOrder(t, cookie, { ...defaultBasket(world), ...over }, key);
-  const createOk = async (cookie = sara) => {
-    const res = await create(cookie);
+  const createOk = async (cookie = sara, over: Partial<ReturnType<typeof defaultBasket>> = {}) => {
+    const res = await create(cookie, over);
     expect(res.status).toBe(201);
-    return res.body as { id: string; code: string; total: string };
+    return res.body as { id: string; code: string; total: string; key: string };
   };
   const cancel = (cookie: string, id: string) => t.http().post(`/api/shop/orders/${id}/cancel`).set('Cookie', cookie).set(csrf);
   const dbOrder = (id: string) => t.prisma.order.findUniqueOrThrow({ where: { id }, include: { createdBy: true, confirmedBy: true, cancelledBy: true, payments: true, odooOutbox: true } });
@@ -87,6 +92,10 @@ describe('Online checkout (e2e)', () => {
         [{ name: '<script>alert(1)</script>' }, 'name'],
         [{ email: 'not-an-email' }, 'email'],
         [{ email: '' }, 'email'],
+        [{ phone: '44123456' }, 'phone'],
+        [{ phone: '' }, 'phone'],
+        [{ paymentMethod: 'cash' as 'card' }, 'paymentMethod'],
+        [{ locale: 'fr' as 'en' }, 'locale'],
       ];
       for (const [over, field] of cases) {
         const res = await create(sara, over);
@@ -97,11 +106,12 @@ describe('Online checkout (e2e)', () => {
       expect(await t.prisma.order.count()).toBe(0);
     });
 
-    it('needs the customer cookie and the CSRF header', async () => {
-      expect((await t.http().post('/api/shop/orders').set(csrf).send(defaultBasket(world))).status).toBe(401);
-      const noCsrf = await t.http().post('/api/shop/orders').set('Cookie', sara).send(defaultBasket(world));
-      expect(noCsrf.status).toBe(403);
-      expect(noCsrf.body.code).toBe('CSRF');
+    it('needs the CSRF header, signed in or not', async () => {
+      for (const request of [() => t.http().post('/api/shop/orders').set('Cookie', sara), () => t.http().post('/api/shop/orders')]) {
+        const noCsrf = await request().send(defaultBasket(world));
+        expect(noCsrf.status).toBe(403);
+        expect(noCsrf.body.code).toBe('CSRF');
+      }
       expect(await t.prisma.order.count()).toBe(0);
     });
 
@@ -118,8 +128,10 @@ describe('Online checkout (e2e)', () => {
         paidAt: null,
         replayed: false,
         branch: { code: 'BO', name: 'BO Branch', nameAr: 'فرع BO' },
-        customer: { name: 'Sara Al-Mansouri', email: 'sara@example.com', phone: CUSTOMER_PHONE },
+        customer: { name: 'Sara Al-Mansouri', email: CUSTOMER_EMAIL, phone: CUSTOMER_PHONE },
+        paymentMethod: 'card',
         lastPayment: null,
+        key: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/) as string,
       });
       expect(res.body.items.map((i: { productName: string; unitPrice: string; quantity: number; lineTotal: string }) => [i.productName, i.unitPrice, i.quantity, i.lineTotal])).toEqual([
         ['Dash Cam', '499.00', 1, '499.00'],
@@ -134,14 +146,30 @@ describe('Online checkout (e2e)', () => {
       for (const leak of ['barcode', 'system.web', 'createdBy', 'customerId']) expect(text).not.toContain(leak);
 
       const row = await dbOrder(res.body.id);
-      expect(row).toMatchObject({ source: 'WEB', customerPhone: CUSTOMER_PHONE, customerEmail: 'sara@example.com', customerName: 'Sara Al-Mansouri', paymentStatus: 'PENDING', branchId: world.bo.id });
+      expect(row).toMatchObject({
+        source: 'WEB',
+        customerPhone: CUSTOMER_PHONE,
+        customerEmail: CUSTOMER_EMAIL,
+        customerName: 'Sara Al-Mansouri',
+        customerLocale: 'en',
+        paymentStatus: 'PENDING',
+        branchId: world.bo.id,
+      });
       expect(row.createdBy).toMatchObject({ username: 'system.web', isActive: false });
-      const customer = await t.prisma.customer.findUniqueOrThrow({ where: { phone: CUSTOMER_PHONE } });
+      const customer = await t.prisma.customer.findUniqueOrThrow({ where: { email: CUSTOMER_EMAIL } });
       expect(row.customerId).toBe(customer.id);
-      expect(customer).toMatchObject({ name: 'Sara Al-Mansouri', email: 'sara@example.com' });
+      // what she typed fills the form next time
+      expect(customer).toMatchObject({ name: 'Sara Al-Mansouri', phone: CUSTOMER_PHONE });
 
       const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'shop.order.create', entityId: res.body.id } });
-      expect(log).toMatchObject({ outcome: 'SUCCESS', actorId: null, actorUsername: CUSTOMER_PHONE, actorRole: null, entityType: 'Order', branchId: world.bo.id });
+      expect(log).toMatchObject({ outcome: 'SUCCESS', actorId: null, actorUsername: CUSTOMER_EMAIL, actorRole: null, entityType: 'Order', branchId: world.bo.id });
+    });
+
+    it('a signed-in customer orders under the email they signed in with, whatever the form says', async () => {
+      const res = await create(other, { email: 'someone-else@example.com' });
+      expect(res.status).toBe(201);
+      expect(res.body.customer.email).toBe(OTHER_CUSTOMER_EMAIL);
+      expect(await t.prisma.customer.findUnique({ where: { email: 'someone-else@example.com' } })).toBeNull();
     });
 
     it('numbers web orders in the branch sequence, next to showroom ones', async () => {
@@ -173,7 +201,8 @@ describe('Online checkout (e2e)', () => {
       expect(mine.body).toMatchObject({ id: order.id, code: 'BO-000001', total: '619.50' });
       expect((await getWebOrder(t, other, order.id)).status).toBe(404);
       expect((await cancel(other, order.id)).status).toBe(404);
-      expect((await getWebOrder(t, '', order.id)).status).toBe(401);
+      // without a cookie or the order's key it does not exist
+      expect((await getWebOrder(t, '', order.id)).status).toBe(404);
       expect((await t.prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('PENDING');
     });
 
@@ -189,7 +218,7 @@ describe('Online checkout (e2e)', () => {
       expect(again.body.code).toBe('ORDER_NOT_CANCELLABLE');
 
       const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'shop.order.cancel', entityId: order.id, outcome: 'SUCCESS' } });
-      expect(log).toMatchObject({ actorUsername: CUSTOMER_PHONE, before: { status: 'PENDING' }, after: { status: 'CANCELLED' } });
+      expect(log).toMatchObject({ actorUsername: CUSTOMER_EMAIL, before: { status: 'PENDING' }, after: { status: 'CANCELLED' } });
     });
 
     it('the cashier of Bin Omran sees it as a web order', async () => {
@@ -202,12 +231,136 @@ describe('Online checkout (e2e)', () => {
     });
   });
 
+  describe('guest checkout and pay at the branch', () => {
+    const guest = (over: Partial<ReturnType<typeof defaultBasket>> = {}, key?: string) =>
+      createWebOrder(t, '', { ...defaultBasket(world), email: 'guest@example.com', name: 'Khalid Al-Kuwari', ...over }, key);
+
+    it('a guest orders to pay at the branch: no cookie, no expiry, nothing to pay online', async () => {
+      const res = await guest({ paymentMethod: 'branch', locale: 'ar' });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        status: 'PENDING',
+        paymentStatus: 'NONE',
+        paymentMethod: 'branch',
+        expiresAt: null,
+        customer: { name: 'Khalid Al-Kuwari', email: 'guest@example.com', phone: CUSTOMER_PHONE },
+        key: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/) as string,
+      });
+      // a guest gets no session
+      expect(res.headers['set-cookie']).toBeUndefined();
+
+      const row = await dbOrder(res.body.id);
+      expect(row).toMatchObject({ customerLocale: 'ar', paymentStatus: 'NONE', expiresAt: null });
+      const customer = await t.prisma.customer.findUniqueOrThrow({ where: { email: 'guest@example.com' } });
+      expect(row.customerId).toBe(customer.id);
+      expect(customer).toMatchObject({ name: 'Khalid Al-Kuwari', phone: CUSTOMER_PHONE, lastLoginAt: null });
+
+      const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'shop.order.create', entityId: res.body.id } });
+      expect(log).toMatchObject({ outcome: 'SUCCESS', actorId: null, actorUsername: 'guest@example.com' });
+    });
+
+    it("the order's key opens it; a wrong key, or another order's, does not", async () => {
+      const mine = (await guest({ paymentMethod: 'branch' })).body as { id: string; key: string };
+      const theirs = (await guest({ paymentMethod: 'branch', email: 'other-guest@example.com' })).body as { id: string; key: string };
+      const res = await getWebOrder(t, '', mine.id, mine.key);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id: mine.id, paymentMethod: 'branch' });
+      expect(res.body.key).toBeUndefined();
+      expect((await getWebOrder(t, '', mine.id, theirs.key)).status).toBe(404);
+      expect((await getWebOrder(t, '', mine.id, 'x'.repeat(32))).status).toBe(404);
+      expect((await getWebOrder(t, '', mine.id)).status).toBe(404);
+      // a signed-in customer who does not own it gets nothing either, but the key still works next to any cookie
+      expect((await getWebOrder(t, other, mine.id)).status).toBe(404);
+      expect((await getWebOrder(t, other, mine.id, mine.key)).status).toBe(200);
+    });
+
+    it('a guest pays by card with the key, and comes back to a return page that carries it', async () => {
+      const order = (await guest()).body as { id: string; key: string; expiresAt: string };
+      expect(order.expiresAt).not.toBeNull();
+      expect((await payWebOrder(t, '', order.id)).status).toBe(404);
+      const paid = await payWebOrder(t, '', order.id, FAKE_TOKENS.ok, 'en', order.key);
+      expect(paid.status).toBe(200);
+      expect(paid.body.redirectUrl).toMatch(RETURN_URL(order.id));
+      expect(paid.body.redirectUrl).toContain(`key=${order.key}`);
+
+      fakeGateway(t).settle(await chargeIdOf(t, order.id), 'CAPTURED');
+      const back = await reconcileWebOrder(t, '', order.id, order.key);
+      expect(back.status).toBe(200);
+      expect(back.body).toMatchObject({ paymentStatus: 'PAID', status: 'CONFIRMED' });
+    });
+
+    it("a guest order under an account's email shows up in that account, and leaves its saved details alone", async () => {
+      await t.prisma.customer.update({ where: { email: OTHER_CUSTOMER_EMAIL }, data: { name: 'Omar Saleh', phone: '+97466123456' } });
+      const res = await guest({ email: 'Omar@Example.com', name: 'Somebody Else', phone: '77123456', paymentMethod: 'branch' });
+      expect(res.status).toBe(201);
+      expect(res.body.customer).toMatchObject({ email: OTHER_CUSTOMER_EMAIL, name: 'Somebody Else', phone: '+97477123456' });
+
+      const omar = await t.prisma.customer.findUniqueOrThrow({ where: { email: OTHER_CUSTOMER_EMAIL } });
+      expect(omar).toMatchObject({ name: 'Omar Saleh', phone: '+97466123456' });
+      const list = await t.http().get('/api/shop/orders').set('Cookie', other);
+      expect(list.body.map((o: { id: string }) => o.id)).toEqual([res.body.id]);
+    });
+
+    it('a guest replays a checkout by its Idempotency-Key and the same email', async () => {
+      const first = await guest({ paymentMethod: 'branch' }, 'guest-checkout-1');
+      const again = await guest({ paymentMethod: 'branch' }, 'guest-checkout-1');
+      expect(first.status).toBe(201);
+      expect(again.status).toBe(200);
+      expect(again.body).toMatchObject({ id: first.body.id, replayed: true, key: first.body.key });
+      expect(await t.prisma.order.count()).toBe(1);
+    });
+
+    it('one customer may hold three open pay-at-branch orders, not a fourth', async () => {
+      for (let i = 0; i < 3; i++) expect((await guest({ paymentMethod: 'branch' })).status).toBe(201);
+      const fourth = await guest({ paymentMethod: 'branch' });
+      expect(fourth.status).toBe(409);
+      expect(fourth.body.code).toBe('TOO_MANY_OPEN_ORDERS');
+      // a card order is still fine, and another customer is not affected
+      expect((await guest()).status).toBe(201);
+      expect((await guest({ paymentMethod: 'branch', email: 'other-guest@example.com' })).status).toBe(201);
+    });
+
+    it('a pay-at-branch order is not paid by card, not cancelled by the customer and never expires', async () => {
+      const order = (await guest({ paymentMethod: 'branch' })).body as { id: string; key: string };
+      const pay = await payWebOrder(t, '', order.id, FAKE_TOKENS.ok, 'en', order.key);
+      expect(pay.status).toBe(409);
+      expect(pay.body.code).toBe('ORDER_NOT_PAYABLE');
+      const cancelled = await t.http().post(`/api/shop/orders/${order.id}/cancel`).set('X-Order-Key', order.key).set(csrf);
+      expect(cancelled.status).toBe(409);
+      expect(cancelled.body.code).toBe('ORDER_NOT_CANCELLABLE');
+
+      await t.app.get(CheckoutExpiryService).sweep(new Date(Date.now() + 24 * 60 * MINUTE));
+      expect(await dbOrder(order.id)).toMatchObject({ status: 'PENDING', paymentStatus: 'NONE' });
+      // nothing was charged, so the return page's reconcile just answers the order
+      const back = await reconcileWebOrder(t, '', order.id, order.key);
+      expect(back.status).toBe(200);
+      expect(back.body).toMatchObject({ id: order.id, paymentMethod: 'branch' });
+    });
+
+    it('emails the guest the order (with the link that opens it) and alerts the shop', async () => {
+      const order = (await guest({ paymentMethod: 'branch', locale: 'ar' })).body as { id: string; code: string; key: string };
+      const mail = lastEmailTo(t, 'guest@example.com');
+      expect(mail?.subject).toContain(order.code);
+      expect(mail?.html).toContain('dir="rtl"');
+      expect(mail?.text).toContain(`${SHOP_ENV.WEB_PUBLIC_URL}/ar/checkout/return?order=${order.id}&key=${order.key}`);
+      expect(lastEmailTo(t, 'shop@wolfcar.qa')?.subject).toContain(order.code);
+    });
+
+    it('the cashier sees a pay-at-branch order next to the paid ones', async () => {
+      const order = (await guest({ paymentMethod: 'branch' })).body as { id: string };
+      const cashier = (await login(t, 'bo.cashier', PW.cashier)).token;
+      const res = await t.http().get('/api/orders').set(bearer(cashier));
+      expect(res.body.items).toEqual([expect.objectContaining({ id: order.id, source: 'WEB', status: 'PENDING', paymentStatus: 'NONE', customerPhone: CUSTOMER_PHONE })]);
+    });
+  });
+
   describe('payment', () => {
     it('pays with the test token: the answer is the return page and the attempt is open', async () => {
       const order = await createOk();
       const res = await payWebOrder(t, sara, order.id, FAKE_TOKENS.ok, 'en');
       expect(res.status).toBe(200);
-      expect(res.body.redirectUrl).toBe(RETURN_URL(order.id));
+      expect(res.body.redirectUrl).toMatch(RETURN_URL(order.id));
+      expect(res.body.redirectUrl).toContain(`key=${order.key}`);
       expect(res.body.order).toMatchObject({ id: order.id, status: 'PENDING', paymentStatus: 'PENDING', lastPayment: { status: 'INITIATED', failureCode: null } });
 
       const payment = await t.prisma.payment.findFirstOrThrow({ where: { orderId: order.id } });
@@ -217,7 +370,7 @@ describe('Online checkout (e2e)', () => {
       expect(payment.rawLast).toMatchObject({ id: payment.chargeId, status: 'INITIATED' });
       // the Arabic site gets the Arabic return page
       const second = await createOk(other);
-      expect((await payWebOrder(t, other, second.id, FAKE_TOKENS.ok, 'ar')).body.redirectUrl).toBe(RETURN_URL(second.id, 'ar'));
+      expect((await payWebOrder(t, other, second.id, FAKE_TOKENS.ok, 'ar')).body.redirectUrl).toMatch(RETURN_URL(second.id, 'ar'));
     });
 
     it('a token the provider refuses answers 402 and leaves the order payable', async () => {
@@ -304,7 +457,7 @@ describe('Online checkout (e2e)', () => {
       await payWebOrder(t, sara, order.id);
       const pay = await logOf('shop.order.pay');
       expect(pay).toHaveLength(1);
-      expect(pay[0]).toMatchObject({ outcome: 'SUCCESS', actorUsername: CUSTOMER_PHONE, actorId: null, entityType: 'Order', entityId: order.id, branchId: world.bo.id });
+      expect(pay[0]).toMatchObject({ outcome: 'SUCCESS', actorUsername: CUSTOMER_EMAIL, actorId: null, entityType: 'Order', entityId: order.id, branchId: world.bo.id });
       const text = JSON.stringify(pay, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
       expect(text).not.toContain(SHOP_ENV.TAP_SECRET_KEY);
     });
@@ -315,6 +468,7 @@ describe('Online checkout (e2e)', () => {
       const order = await createOk();
       await payWebOrder(t, sara, order.id);
       const charge = await capturedCharge(order.id);
+      const sent = jest.spyOn(t.app.get<EmailSender>(EMAIL_SENDER), 'send');
 
       const res = await signedWebhook(t, charge);
       expect(res.status).toBe(200);
@@ -337,6 +491,13 @@ describe('Online checkout (e2e)', () => {
       expect(after.updatedAt).toEqual(row.updatedAt);
       expect(await t.prisma.odooOutbox.count({ where: { orderId: order.id } })).toBe(1);
       expect(await t.prisma.payment.count({ where: { orderId: order.id } })).toBe(1);
+      // one receipt to Sara and one alert to the shop, not one per delivery
+      const subjects = sent.mock.calls.map(([m]) => [m.to.join(','), m.subject]);
+      sent.mockRestore();
+      expect(subjects).toEqual([
+        [CUSTOMER_EMAIL, expect.stringContaining(`Receipt for your order ${order.code}`)],
+        ['shop@wolfcar.qa', expect.stringContaining(order.code)],
+      ]);
 
       const log = await logOf('shop.payment.webhook');
       expect(log.map((l) => [l.outcome, (l.metadata as { outcome: string }).outcome])).toEqual([

@@ -26,11 +26,11 @@ describe('Reservations role (e2e)', () => {
     expect(res.body.credentials.username).toMatch(/^reservations\.[a-z0-9]{4}$/);
   });
 
-  it('the role holds exactly the three booking permissions by default', async () => {
+  it("the role holds exactly the three booking permissions and the website's orders by default", async () => {
     const me = await login(t, 'reservations', PW.reservations);
     const user = me.body.user as { role: string; permissions: string[] };
     expect(user.role).toBe('RESERVATIONS');
-    expect([...user.permissions].sort()).toEqual(['booking.general.manage', 'booking.ppf.manage', 'booking.ppf.read']);
+    expect([...user.permissions].sort()).toEqual(['booking.general.manage', 'booking.ppf.manage', 'booking.ppf.read', 'order.web.handle']);
   });
 
   it('the Super Admin holds the booking permissions too', async () => {

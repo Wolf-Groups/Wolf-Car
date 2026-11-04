@@ -34,11 +34,19 @@ export function PaymentBadge({ status, collected }: { status: PaymentStatusName;
 /**
  * The payment badge an order shows in the list and the detail: none for a
  * showroom order (paid at the till), nor for a web order cancelled before it
- * was paid (the status badge already says it is cancelled).
+ * was paid (the status badge already says it is cancelled); "Pay at branch"
+ * for a web order to be paid at the till.
  */
 export function OrderPaymentBadge({ order }: { order: Pick<OrderSummary, "source" | "status" | "paymentStatus" | "collectedAt"> }) {
   if (order.source !== "WEB" || (order.status === "CANCELLED" && order.paymentStatus === "PENDING")) return null;
+  // ordered on the website to pay at the till (NONE): say so until it is handed over
+  if (order.paymentStatus === "NONE") return order.status === "CANCELLED" ? null : <PayAtBranchBadge collected={order.collectedAt !== null} />;
   return <PaymentBadge status={order.paymentStatus} collected={order.collectedAt !== null} />;
+}
+
+function PayAtBranchBadge({ collected }: { collected: boolean }) {
+  const t = useTranslations("Orders");
+  return <span className={cn(BADGE, collected ? "bg-sand text-ink-2" : "bg-warning-soft text-warning")}>{t(collected ? "collected" : "payAtBranch")}</span>;
 }
 
 export function RoleBadge({ role }: { role: RoleName }) {

@@ -1,3 +1,4 @@
+import type { PaymentMethod } from '../../../../shared/shop';
 import { money } from '../../common/money';
 import type { OrderStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from '../../generated/prisma/client';
 import { imageUrl } from '../../uploads/image-processing';
@@ -33,6 +34,8 @@ export interface WebOrderView {
   code: string;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  /** "branch" for an order paid at the branch on collection (paymentStatus NONE) */
+  paymentMethod: PaymentMethod;
   /** "619.50" */
   total: string;
   currency: string;
@@ -54,6 +57,7 @@ export function webOrderView(row: WebOrderRow): WebOrderView {
     code: row.code,
     status: row.status,
     paymentStatus: row.paymentStatus,
+    paymentMethod: row.paymentStatus === 'NONE' ? 'branch' : 'card',
     total: money(row.total),
     currency: row.currency,
     createdAt: row.createdAt.toISOString(),

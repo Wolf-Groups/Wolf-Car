@@ -7,10 +7,12 @@ import type { Prisma } from '../../generated/prisma/client';
 import { OdooOrdersService } from '../../odoo/odoo-orders.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { checkoutUnavailable, orderNotFound } from '../checkout/checkout.service';
+import { type OrderAccess, orderAccessWhere } from '../checkout/order-access';
+import { orderKey } from '../checkout/order-key';
 import { ensureSystemWebUser } from '../checkout/system-web-user';
 import { WEB_ORDER_SELECT, webOrderView, type WebOrderView } from '../checkout/web-order.view';
-import type { CustomerPrincipal } from '../customers/customers.service';
 import type { PayDto } from '../dto/shop.dto';
+import { OrderEmailsService } from '../emails/order-emails.service';
 import { type GatewayRefund, PAYMENT_GATEWAY, type PaymentGateway, PaymentGatewayError } from './payment-gateway';
 import { chargeOutcome, formatTapAmount, sameAmount, type TapCharge } from './tap-charge';
 import { verifyTapSignature } from './tap-signature';
@@ -110,16 +112,20 @@ export class PaymentsService {
     private readonly trail: AuditTrail,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway | null,
     private readonly odooOrders: OdooOrdersService,
+    private readonly emails: OrderEmailsService,
   ) {}
 
-  /** Creates a Payment and a Tap charge; answers the 3-D Secure URL. 404 for anyone else's order. 409 ALREADY_PAID (checked first) / ORDER_NOT_PAYABLE, 402 PAYMENT_FAILED. */
-  async pay(customer: CustomerPrincipal, orderId: string, dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
+  /**
+   * Creates a Payment and a Tap charge; answers the 3-D Secure URL. 404 when `access` cannot open the order. 409
+   * ALREADY_PAID (checked first) / ORDER_NOT_PAYABLE (also a pay-at-branch order), 402 PAYMENT_FAILED. Tap sends the
+   * customer back to a return page that carries the order's key, so it opens without a session.
+   */
+  async pay(access: OrderAccess, orderId: string, dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
     const gateway = this.requireGateway();
     const webUrl = this.publicUrl('WEB_PUBLIC_URL');
     const apiUrl = this.publicUrl('API_PUBLIC_URL');
 
-    const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId: customer.id }, select: WEB_ORDER_SELECT });
-    if (!order) throw orderNotFound();
+    const order = await this.findOrder(access, orderId);
     this.trail.setEntity('Order', order.id).setBranch(order.branch.id);
 
     // any captured attempt, not only the newest: a later attempt from another tab may have failed
@@ -140,8 +146,8 @@ export class PaymentsService {
         amount: money(order.total),
         currency: 'QAR',
         tokenId: dto.tokenId,
-        customer: { name: order.customerName, email: order.customerEmail ?? customer.email ?? '', phone: order.customerPhone ?? customer.phone },
-        redirectUrl: `${webUrl}/${dto.locale}/checkout/return?order=${order.id}`,
+        customer: { name: order.customerName, email: order.customerEmail ?? '', phone: order.customerPhone ?? '' },
+        redirectUrl: `${webUrl}/${dto.locale}/checkout/return?order=${order.id}&key=${orderKey(order.id, this.secret())}`,
         postUrl: `${apiUrl}/api/shop/payments/tap/webhook`,
         orderId: order.id,
         orderCode: order.code,
@@ -164,11 +170,12 @@ export class PaymentsService {
     return { redirectUrl: charge.transaction?.url ?? null, order: webOrderView(fresh) };
   }
 
-  /** Reads the newest attempt's charge back from the provider and settles it; used by the return page. */
-  async reconcile(customer: CustomerPrincipal, orderId: string): Promise<WebOrderView> {
-    const gateway = this.requireGateway();
-    const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId: customer.id }, select: WEB_ORDER_SELECT });
-    if (!order) throw orderNotFound();
+  /**
+   * Reads the newest attempt's charge back from the provider and settles it; used by the return page. An order
+   * nothing was charged for (paid at the branch, or the card form not sent yet) is answered as it is, gateway or not.
+   */
+  async reconcile(access: OrderAccess, orderId: string): Promise<WebOrderView> {
+    const order = await this.findOrder(access, orderId);
     this.trail.setEntity('Order', order.id).setBranch(order.branch.id);
 
     const latest = await this.prisma.payment.findFirst({
@@ -177,6 +184,7 @@ export class PaymentsService {
       select: { chargeId: true },
     });
     if (!latest?.chargeId) return webOrderView(order);
+    const gateway = this.requireGateway();
 
     let charge: TapCharge;
     try {
@@ -277,6 +285,8 @@ export class PaymentsService {
     if (settled.orderId) this.trail.setEntity('Order', settled.orderId).setBranch(settled.branchId);
     this.trail.addMetadata({ via, chargeId: charge.id, outcome: settled.outcome, ...(settled.afterExpiry ? { afterExpiry: true } : {}) });
     if (settled.failure) this.trail.markFailure(settled.failure);
+    // only the settle that made it PAID: a re-delivered webhook or a later reconcile is already_paid
+    if (settled.outcome === 'paid' && settled.orderId) await this.emails.paid(settled.orderId);
     return { outcome: settled.outcome, orderId: settled.orderId };
   }
 
@@ -306,6 +316,18 @@ export class PaymentsService {
     if (!ACCEPTED_REFUND_STATUSES.has(refundStatus.toUpperCase())) throw refundFailed(code64(refundStatus || 'UNKNOWN'));
     await this.prisma.payment.update({ where: { id: payment.id }, data: { refundId: refund.id, refundedAt: new Date() }, select: { id: true } });
     return { refundId: refund.id };
+  }
+
+  /** The order `access` may open (its key, or the signed-in customer's own); 404 otherwise. */
+  private async findOrder(access: OrderAccess, orderId: string) {
+    const where = orderAccessWhere(access, orderId, this.secret());
+    const order = where && (await this.prisma.order.findFirst({ where, select: WEB_ORDER_SELECT }));
+    if (!order) throw orderNotFound();
+    return order;
+  }
+
+  private secret(): string {
+    return this.config.get('JWT_ACCESS_SECRET', { infer: true });
   }
 
   private requireGateway(): PaymentGateway {

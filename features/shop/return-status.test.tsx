@@ -7,7 +7,7 @@ import { track } from "@/lib/track";
 import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
 import { router } from "@/tests/setup";
-import { apiError, CART_KEY, CART_PRODUCTS, ORDER_ID, paidOrder, webOrder } from "@/tests/shop-fixtures";
+import { apiError, branchOrder, CART_KEY, CART_PRODUCTS, ORDER_ID, ORDER_KEY, paidOrder, webOrder } from "@/tests/shop-fixtures";
 import { CHECKOUT_POLL_MAX_MS, CHECKOUT_POLL_MS } from "@/shared/shop";
 import type { WebOrder } from "@/lib/api/types";
 import { ReturnStatus } from "./return-status";
@@ -62,7 +62,7 @@ describe("checkout return page", () => {
     expect(screen.getByText("Checking your payment…")).toBeInTheDocument();
   });
 
-  it("shows the order code once paid, clears the basket, reports the sale and stops polling", async () => {
+  it("thanks the customer once paid, with the code and what happens next; clears the basket, reports the sale and stops polling", async () => {
     const calls = listen({ reconcile: () => json(pending()), poll: (n) => json(n < 2 ? pending() : paidOrder()) });
     renderOnSite(<ReturnStatus orderId={ORDER_ID} />);
     await waitFor(() => expect(calls.reconcile).toBe(1));
@@ -70,12 +70,17 @@ describe("checkout return page", () => {
 
     await tick(CHECKOUT_POLL_MS);
     await tick(CHECKOUT_POLL_MS);
-    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Thank you, Sara!" })).toBeInTheDocument();
+    expect(screen.getByText("Payment received")).toBeInTheDocument();
     expect(screen.getByText("Your order code")).toBeInTheDocument();
     expect(screen.getByText("BO-000001")).toBeInTheDocument();
-    expect(screen.getByText("Show this code at the branch when you collect your parts.")).toBeInTheDocument();
-    // plan Task 14: no email is sent in phase 1, so no copy claims one
-    expect(document.body).not.toHaveTextContent(/e-?mail/i);
+    const steps = screen.getByRole("list", { name: "What happens next" });
+    expect(steps).toHaveTextContent("We get your order ready.");
+    expect(steps).toHaveTextContent(/We call you on .*5512 3456.* when it's ready\./);
+    expect(steps).toHaveTextContent("Collect it at the branch and show your order code.");
+    expect(screen.getByText(/We emailed your receipt to .*sara@example\.com/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Continue shopping" })).toHaveAttribute("href", "/products");
+    expect(screen.getByRole("link", { name: "Follow your orders in My account" })).toHaveAttribute("href", "/account");
 
     // where to collect: the Bin Omran branch card with its phone and map
     const branch = getBranches("en").binomran;
@@ -90,6 +95,58 @@ describe("checkout return page", () => {
     const polls = calls.poll;
     await tick(CHECKOUT_POLL_MS * 3);
     expect(calls.poll).toBe(polls);
+  });
+
+  it("thanks a customer who will pay at the branch: placed, nothing to poll, the basket emptied", async () => {
+    const calls = listen({ reconcile: () => json(branchOrder()), poll: () => json(branchOrder()) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByRole("heading", { name: "Thank you, Sara!" })).toBeInTheDocument();
+    expect(screen.getByText("Your order is placed")).toBeInTheDocument();
+    expect(screen.getByText("BO-000001")).toBeInTheDocument();
+    const steps = screen.getByRole("list", { name: "What happens next" });
+    expect(steps).toHaveTextContent(/We call you on .*5512 3456.* to confirm the order\./);
+    expect(steps).toHaveTextContent(/Pay QAR\s619\.50 and collect your order at the branch\./);
+    expect(screen.getByText(/We emailed the order details to .*sara@example\.com/)).toBeInTheDocument();
+    expect(screen.queryByText("Payment received")).not.toBeInTheDocument();
+    await waitFor(() => expect(storedCart()).toEqual([]));
+    expect(tracked().filter((e) => e.startsWith("order_"))).toEqual(["order_placed"]);
+    await tick(CHECKOUT_POLL_MS * 2);
+    expect(calls.poll).toBe(0);
+  });
+
+  it("says a pay-at-branch order the branch cancelled was cancelled, with the branch to call, never a checkout to retry", async () => {
+    listen({ reconcile: () => json(branchOrder({ status: "CANCELLED" })) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByText("The branch cancelled this order. Call us if you didn't expect this.")).toBeInTheDocument();
+    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Back to checkout" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Call/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to products" })).toBeInTheDocument();
+    // nothing was bought: the basket stays
+    expect(storedCart()).toHaveLength(1);
+  });
+
+    it.each([
+    ["confirmed by the branch", branchOrder({ status: "CONFIRMED" }), "Confirmed · pay at the branch"],
+    ["handed over", branchOrder({ status: "CONFIRMED", collectedAt: "2031-03-11T08:00:00.000Z" }), "Collected"],
+  ])("says where a pay-at-branch order stands when it is opened again later (%s), not that it was just placed", async (_label, order, state) => {
+    listen({ reconcile: () => json(order) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByText(state)).toBeInTheDocument();
+    expect(screen.queryByText("Your order is placed")).not.toBeInTheDocument();
+  });
+
+    it("opens a guest's order with its key, and keeps the key on Try another card", async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post(`/api/shop/orders/${ORDER_ID}/reconcile`, ({ request }) => {
+        keys.push(request.headers.get("x-order-key"));
+        return json(webOrder({ lastPayment: { status: "FAILED", failureCode: "DECLINED" } }));
+      }),
+    );
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByRole("link", { name: "Try another card" })).toHaveAttribute("href", `/checkout?order=${ORDER_ID}&key=${ORDER_KEY}`);
+    expect(keys).toEqual([ORDER_KEY]);
   });
 
   it("needs no poll when reconcile already finds the order paid", async () => {
@@ -279,8 +336,8 @@ describe("checkout return page", () => {
     listen({ reconcile: () => json(paidOrder()) });
     renderOnSite(<ReturnStatus orderId={ORDER_ID} />, { locale: "ar" });
     expect(await screen.findByText("تم استلام الدفع")).toBeInTheDocument();
-    // the root بريد also catches بريدك and بريدًا
-    expect(document.body).not.toHaveTextContent(/بريد|إيميل/);
+    expect(screen.getByRole("heading", { name: "شكراً لك يا Sara!" })).toBeInTheDocument();
+    expect(screen.getByText(/أرسلنا الإيصال إلى/)).toBeInTheDocument();
     expect(screen.getAllByText(getBranches("ar").binomran.name).length).toBeGreaterThan(0);
   });
 });

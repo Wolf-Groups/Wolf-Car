@@ -2,8 +2,8 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import { server } from "@/tests/msw";
-import { apiError, customer, ORDER_ID, recordShopCalls, setCustomerHint, type ShopCall, webOrder } from "@/tests/shop-fixtures";
-import { hasCustomerHint, shop, shopApi } from "./shop-api";
+import { apiError, customer, ORDER_ID, ORDER_KEY, recordShopCalls, setCustomerHint, type ShopCall, webOrder } from "@/tests/shop-fixtures";
+import { hasCustomerHint, orderPath, shop, shopApi } from "./shop-api";
 
 afterEach(() => {
   setCustomerHint(false);
@@ -47,13 +47,13 @@ describe("shopApi", () => {
 
   it("sends JSON with the CSRF header and extra headers on a POST", async () => {
     const calls = listen(() => HttpResponse.json({ ok: true }));
-    await shopApi("/otp", { method: "POST", json: { phone: "+97455123456" }, headers: { "Idempotency-Key": "k-1" } });
+    await shopApi("/otp", { method: "POST", json: { email: "sara@example.com" }, headers: { "Idempotency-Key": "k-1" } });
     expect(calls[0].method).toBe("POST");
     expect(calls[0].path).toBe("/api/shop/otp");
     expect(calls[0].headers.get("x-requested-with")).toBe("wolfcar");
     expect(calls[0].headers.get("content-type")).toMatch(/^application\/json/);
     expect(calls[0].headers.get("idempotency-key")).toBe("k-1");
-    expect(calls[0].body).toEqual({ phone: "+97455123456" });
+    expect(calls[0].body).toEqual({ email: "sara@example.com" });
   });
 
   it("sends the cookie only (credentials same-origin), never a staff bearer token", async () => {
@@ -73,9 +73,9 @@ describe("shopApi", () => {
     expect(error).toMatchObject({ status: 401, code: "SESSION_EXPIRED" });
   });
 
-  it("keeps retryAfterSeconds from a 429 (too many codes for one phone)", async () => {
+  it("keeps retryAfterSeconds from a 429 (too many codes for one address)", async () => {
     listen(() => apiError(429, "OTP_TOO_MANY", { retryAfterSeconds: 840 }));
-    const error = await shopApi("/otp", { method: "POST", json: { phone: "+97455123456" } }).catch((e: unknown) => e);
+    const error = await shopApi("/otp", { method: "POST", json: { email: "sara@example.com" } }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 429, code: "OTP_TOO_MANY", retryAfterSeconds: 840 });
   });
@@ -85,8 +85,8 @@ describe("shop", () => {
   const order = webOrder();
 
   it.each([
-    ["sendOtp", "POST", "/api/shop/otp", { phone: "+97455123456" }, () => shop.sendOtp("+97455123456")],
-    ["verifyOtp", "POST", "/api/shop/otp/verify", { phone: "+97455123456", code: "482915" }, () => shop.verifyOtp("+97455123456", "482915")],
+    ["sendCode", "POST", "/api/shop/otp", { email: "sara@example.com", locale: "ar" }, () => shop.sendCode("sara@example.com", "ar")],
+    ["verifyCode", "POST", "/api/shop/otp/verify", { email: "sara@example.com", code: "482915" }, () => shop.verifyCode("sara@example.com", "482915")],
     ["me", "GET", "/api/shop/me", undefined, () => shop.me()],
     ["getOrder", "GET", `/api/shop/orders/${ORDER_ID}`, undefined, () => shop.getOrder(ORDER_ID)],
     ["pay", "POST", `/api/shop/orders/${ORDER_ID}/pay`, { tokenId: "tok_fake_ok", locale: "ar" }, () => shop.pay(ORDER_ID, "tok_fake_ok", "ar")],
@@ -107,14 +107,38 @@ describe("shop", () => {
         ? HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" })
         : HttpResponse.json({ expiresAt: "2031-03-10T09:05:00.000Z", devCode: "482915" }),
     );
-    await expect(shop.sendOtp("+97455123456")).resolves.toEqual({ expiresAt: "2031-03-10T09:05:00.000Z", devCode: "482915" });
-    await expect(shop.verifyOtp("+97455123456", "482915")).resolves.toEqual({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" });
+    await expect(shop.sendCode("sara@example.com", "en")).resolves.toEqual({ expiresAt: "2031-03-10T09:05:00.000Z", devCode: "482915" });
+    await expect(shop.verifyCode("sara@example.com", "482915")).resolves.toEqual({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" });
   });
 
-  it("creates the order with the basket, name and email, and the Idempotency-Key header", async () => {
-    const calls = listen(() => HttpResponse.json({ ...order, replayed: false }, { status: 201 }));
-    const body = { items: [{ productId: "p-cam", quantity: 1 }, { productId: "p-mats", quantity: 1 }], name: "Sara Ali", email: "sara@example.com" };
-    await expect(shop.createOrder(body, "key-123")).resolves.toEqual({ ...order, replayed: false });
+  it.each([
+    ["getOrder", () => shop.getOrder(ORDER_ID, ORDER_KEY)],
+    ["pay", () => shop.pay(ORDER_ID, "tok_fake_ok", "ar", ORDER_KEY)],
+    ["reconcile", () => shop.reconcile(ORDER_ID, ORDER_KEY)],
+    ["cancel", () => shop.cancel(ORDER_ID, ORDER_KEY)],
+  ] as const)("%s sends the order's key when it has one, so a guest is let in", async (_name, run) => {
+    const calls = listen(() => HttpResponse.json(order));
+    await run();
+    expect(calls[0].headers.get("x-order-key")).toBe(ORDER_KEY);
+  });
+
+  it("sends no key header without a key (a signed-in customer's own order)", async () => {
+    const calls = listen(() => HttpResponse.json(order));
+    await shop.getOrder(ORDER_ID, null);
+    expect(calls[0].headers.get("x-order-key")).toBeNull();
+  });
+
+  it("creates the order with the basket, contact details, how it is paid and the Idempotency-Key header", async () => {
+    const calls = listen(() => HttpResponse.json({ ...order, replayed: false, key: ORDER_KEY }, { status: 201 }));
+    const body = {
+      items: [{ productId: "p-cam", quantity: 1 }, { productId: "p-mats", quantity: 1 }],
+      name: "Sara Ali",
+      phone: "+97455123456",
+      email: "sara@example.com",
+      paymentMethod: "branch" as const,
+      locale: "ar" as const,
+    };
+    await expect(shop.createOrder(body, "key-123")).resolves.toEqual({ ...order, replayed: false, key: ORDER_KEY });
     expect(calls[0]).toMatchObject({ method: "POST", path: "/api/shop/orders", body });
     expect(calls[0].headers.get("idempotency-key")).toBe("key-123");
     expect(calls[0].headers.get("x-requested-with")).toBe("wolfcar");
@@ -130,5 +154,12 @@ describe("shop", () => {
   it("rejects with the API's code when the order cannot be paid", async () => {
     listen(() => apiError(409, "ORDER_NOT_PAYABLE"));
     await expect(shop.pay(ORDER_ID, "tok_fake_ok", "en")).rejects.toMatchObject({ status: 409, code: "ORDER_NOT_PAYABLE" });
+  });
+});
+
+describe("orderPath", () => {
+  it("carries the order and, when known, its key", () => {
+    expect(orderPath("/checkout/return", ORDER_ID, ORDER_KEY)).toBe(`/checkout/return?order=${ORDER_ID}&key=${ORDER_KEY}`);
+    expect(orderPath("/checkout", ORDER_ID, null)).toBe(`/checkout?order=${ORDER_ID}`);
   });
 });

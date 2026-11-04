@@ -1,14 +1,14 @@
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, login, showroomLogin, type Login } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
-import { chargeIdOf, createWebOrder, CUSTOMER_PHONE, defaultBasket, fakeGateway, paidWebOrder, payWebOrder, SHOP_ENV, signedWebhook, signInCustomer } from './utils/shop';
+import { chargeIdOf, createWebOrder, CUSTOMER_EMAIL, CUSTOMER_PHONE, defaultBasket, fakeGateway, paidWebOrder, payWebOrder, SHOP_ENV, signedWebhook, signInCustomer } from './utils/shop';
 
 describe('Showroom & orders (e2e)', () => {
   let t: TestApp;
   let world: World;
   let kioskGh: Login;
   let kioskBo: Login;
-  let tok: Record<'admin' | 'finance' | 'ghCashier' | 'boCashier' | 'ghManager', string>;
+  let tok: Record<'admin' | 'finance' | 'ghCashier' | 'boCashier' | 'ghManager' | 'callCenter', string>;
 
   beforeAll(async () => {
     // the fake payment gateway only matters for the web-order block; showroom orders behave the same
@@ -24,6 +24,7 @@ describe('Showroom & orders (e2e)', () => {
       ghCashier: (await login(t, 'gh.cashier', PW.cashier)).token,
       boCashier: (await login(t, 'bo.cashier', PW.cashier)).token,
       ghManager: (await login(t, 'gh.manager', PW.manager)).token,
+      callCenter: (await login(t, 'reservations', PW.reservations)).token,
     };
   });
   afterAll(async () => {
@@ -290,7 +291,7 @@ describe('Showroom & orders (e2e)', () => {
     let showroomBo: { id: string; code: string };
 
     beforeEach(async () => {
-      sara = await signInCustomer(t, CUSTOMER_PHONE);
+      sara = await signInCustomer(t, CUSTOMER_EMAIL);
       showroomBo = (await place(kioskBo, { customerName: 'Walk In' })).body; // BO-000001
       const created = await createWebOrder(t, sara, defaultBasket(world));
       expect(created.status).toBe(201);
@@ -318,7 +319,7 @@ describe('Showroom & orders (e2e)', () => {
       expect((await api(tok.ghCashier).list('?source=WEB')).body.total).toBe(0);
     });
 
-    it('an abandoned checkout vanishes from the staff list unless asked for (cancelled or web orders)', async () => {
+    it('an abandoned checkout vanishes from the staff list unless cancelled orders are asked for', async () => {
       const bo = api(tok.boCashier);
       expect((await bo.cancel(unpaid.id)).body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'PENDING' });
       expect((await bo.cancel(showroomBo.id)).body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'NONE' });
@@ -334,7 +335,9 @@ describe('Showroom & orders (e2e)', () => {
       expect(codes(all)).toEqual([showroomBo.code, paid.code, mismatch.code].sort());
       expect(all.body.total).toBe(3);
       expect(codes(await bo.list('?status=CANCELLED'))).toEqual([showroomBo.code, unpaid.code, mismatch.code].sort());
-      expect(codes(await bo.list('?source=WEB'))).toEqual([unpaid.code, paid.code, mismatch.code].sort());
+      // the website tab, the dashboard's default: the abandoned checkout stays out of it
+      expect(codes(await bo.list('?source=WEB'))).toEqual([paid.code, mismatch.code].sort());
+      expect(codes(await bo.list('?source=WEB&status=CANCELLED'))).toEqual([unpaid.code, mismatch.code].sort());
       expect(codes(await bo.list('?source=SHOWROOM'))).toEqual([showroomBo.code]);
       expect(codes(await api(tok.finance).list())).toEqual([showroomBo.code, paid.code, mismatch.code].sort());
     });
@@ -450,6 +453,60 @@ describe('Showroom & orders (e2e)', () => {
 
       const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'order.collect', entityId: paid.id, outcome: 'SUCCESS' } });
       expect(log).toMatchObject({ actorUsername: 'bo.cashier', branchId: world.bo.id });
+    });
+
+    it("the call center handles the website's orders: sees every order, confirms, cancels, hands over — never a showroom order", async () => {
+      const cc = api(tok.callCenter);
+      const place = async (email: string) => {
+        const res = await createWebOrder(t, '', { ...defaultBasket(world), email, paymentMethod: 'branch' });
+        expect(res.status).toBe(201);
+        return res.body as { id: string; code: string };
+      };
+      const toConfirm = await place('first@example.com');
+      const toCancel = await place('second@example.com');
+
+      // every order, the showroom's too (to look at)
+      const all = await cc.list();
+      expect(all.status).toBe(200);
+      expect(codes(all)).toEqual(expect.arrayContaining([showroomBo.code, paid.code, toConfirm.code, toCancel.code]));
+      expect((await cc.get(showroomBo.id)).status).toBe(200);
+
+      const confirmed = await cc.confirm(toConfirm.id);
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body).toMatchObject({ status: 'CONFIRMED', confirmedBy: { username: 'reservations' } });
+      expect((await cc.cancel(toCancel.id)).body).toMatchObject({ status: 'CANCELLED', cancelledBy: { username: 'reservations' } });
+      expect((await cc.collect(toConfirm.id)).body).toMatchObject({ collectedAt: expect.any(String) });
+      expect((await cc.collect(paid.id)).status).toBe(200);
+      // a paid card order is refunded by the Super Admin only
+      const another = await paidWebOrder(t, sara, world);
+      expect((await cc.cancel(another.id)).body.code).toBe('ORDER_NOT_PENDING');
+
+      // the showroom's orders stay the branch's
+      for (const res of [await cc.confirm(showroomBo.id), await cc.cancel(showroomBo.id)]) expect(res.status).toBe(404);
+      expect((await t.prisma.order.findUniqueOrThrow({ where: { id: showroomBo.id } })).status).toBe('PENDING');
+
+      const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'order.confirm', entityId: toConfirm.id, outcome: 'SUCCESS' } });
+      expect(log).toMatchObject({ actorUsername: 'reservations' });
+    });
+
+    it('a pay-at-branch order: the cashier confirms it after calling, then hands it over once paid at the till', async () => {
+      const placed = await createWebOrder(t, '', { ...defaultBasket(world), email: 'guest@example.com', paymentMethod: 'branch' });
+      expect(placed.status).toBe(201);
+      const bo = api(tok.boCashier);
+      // not before it is confirmed
+      expect((await bo.collect(placed.body.id)).body.code).toBe('ORDER_NOT_COLLECTABLE');
+      // and never edited: its total is what the customer was told
+      expect((await t.http().patch(`/api/orders/${placed.body.id}`).set(bearer(tok.boCashier)).send({ customerName: 'Khalid Saleh' })).body.code).toBe('WEB_ORDER_READONLY');
+
+      const confirmed = await t.http().post(`/api/orders/${placed.body.id}/confirm`).set(bearer(tok.boCashier));
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'NONE', confirmedBy: { username: 'bo.cashier' } });
+
+      const collected = await bo.collect(placed.body.id);
+      expect(collected.status).toBe(200);
+      expect(collected.body).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'NONE', collectedAt: expect.any(String) });
+      // paid at the till, so never queued for Odoo as a web sale
+      expect(await t.prisma.odooOutbox.count({ where: { orderId: placed.body.id } })).toBe(0);
     });
   });
 });

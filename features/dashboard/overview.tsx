@@ -41,12 +41,12 @@ export function Overview() {
   const locale = useLocale();
   const { user, can, canAny } = useAuth();
   const today = qatarDay(new Date());
-  const readsOrders = canAny("order.read.branch", "order.read.all");
+  const readsOrders = canAny("order.read.branch", "order.read.all", "order.web.handle");
   const seesPpf = can("booking.ppf.read");
   const waitingRequests = usePendingRequests(seesPpf);
 
-  // a pending web order is waiting for the customer's card, not for staff: only showroom orders count
-  const pending = useQuery({ queryKey: ["stats", "pending"], queryFn: () => count("/orders", { status: "PENDING", source: "SHOWROOM" }), enabled: readsOrders });
+  // the website's orders are the work: a pending one waits for the branch's call (pay at the branch), or briefly for a card
+  const pending = useQuery({ queryKey: ["stats", "pending"], queryFn: () => count("/orders", { status: "PENDING", source: "WEB" }), enabled: readsOrders });
   // the default list already leaves out web orders cancelled before any card was charged
   const ordersToday = useQuery({ queryKey: ["stats", "today", today], queryFn: () => count("/orders", { from: today, to: today }), enabled: readsOrders });
   const confirmedToday = useQuery({
@@ -77,7 +77,7 @@ export function Overview() {
       <PageHeader title={t("Dashboard.greeting", { name: user.displayName })} subtitle={t(`Dashboard.subtitle.${user.role}`)} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {readsOrders && <Stat label={t("Dashboard.pendingOrders")} value={pending.data} href="/dashboard/orders?status=PENDING&source=SHOWROOM" />}
+        {readsOrders && <Stat label={t("Dashboard.pendingOrders")} value={pending.data} href="/dashboard/orders?status=PENDING" />}
         {readsOrders && <Stat label={t("Dashboard.ordersToday")} value={ordersToday.data} href="/dashboard/orders" />}
         {readsOrders && <Stat label={t("Dashboard.confirmedToday")} value={confirmedToday.data} />}
         {seesPpf && <Stat label={t("Dashboard.waitingRequests")} value={waitingRequests} href="/dashboard/ppf-bookings" />}

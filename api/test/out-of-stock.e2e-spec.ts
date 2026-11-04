@@ -1,7 +1,7 @@
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, login, showroomLogin } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
-import { createWebOrder, CUSTOMER_PHONE, defaultBasket, SHOP_ENV, signInCustomer } from './utils/shop';
+import { createWebOrder, CUSTOMER_EMAIL, defaultBasket, SHOP_ENV, signInCustomer } from './utils/shop';
 
 /** A product Odoo has none left of: listed as not available, and refused when ordered. */
 describe('Out-of-stock products (e2e)', () => {
@@ -32,7 +32,7 @@ describe('Out-of-stock products (e2e)', () => {
   });
 
   it('cannot be bought online', async () => {
-    const sara = await signInCustomer(t, CUSTOMER_PHONE);
+    const sara = await signInCustomer(t, CUSTOMER_EMAIL);
     const res = await createWebOrder(t, sara, { ...defaultBasket(world), items: [{ productId: goneId, quantity: 1 }, { productId: world.products[1].id, quantity: 1 }] });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('PRODUCT_UNAVAILABLE');

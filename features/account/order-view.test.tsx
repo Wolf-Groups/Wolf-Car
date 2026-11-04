@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { WebOrder } from "@/lib/api/types";
 import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
-import { apiError, customer, ORDER_ID, paidOrder, setCustomerHint, webOrder } from "@/tests/shop-fixtures";
+import { apiError, branchOrder, customer, ORDER_ID, paidOrder, setCustomerHint, webOrder } from "@/tests/shop-fixtures";
 import { OrderView } from "./order-view";
 
 afterEach(() => setCustomerHint(false));
@@ -35,6 +35,19 @@ describe("one of my orders", () => {
     expect(await screen.findByRole("link", { name: "Continue payment" })).toHaveAttribute("href", `/checkout?order=${ORDER_ID}`);
   });
 
+  it("says an order to pay at the branch waits for the call, then what to pay once confirmed, and never offers to pay online", async () => {
+    signedInWith(branchOrder());
+    const { unmount } = renderOnSite(<OrderView orderId={ORDER_ID} />);
+    expect(await screen.findByText("Waiting for confirmation")).toBeInTheDocument();
+    expect(screen.getByText(/We'll call you on .*\+974 5512 3456.* to confirm your order\./)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Continue payment" })).not.toBeInTheDocument();
+    unmount();
+
+    signedInWith(branchOrder({ status: "CONFIRMED" }));
+    renderOnSite(<OrderView orderId={ORDER_ID} />);
+    expect(await screen.findByText(/Pay QAR\s619\.50 and collect your parts at Bin Omran/)).toBeInTheDocument();
+  });
+
   it("says when the order is not in this account", async () => {
     signedInWith(apiError(404, "ORDER_NOT_FOUND"));
     renderOnSite(<OrderView orderId={ORDER_ID} />);
@@ -44,6 +57,6 @@ describe("one of my orders", () => {
 
   it("asks to sign in first when nobody is signed in", async () => {
     renderOnSite(<OrderView orderId={ORDER_ID} />);
-    expect(await screen.findByLabelText("Mobile number")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Email")).toBeInTheDocument();
   });
 });

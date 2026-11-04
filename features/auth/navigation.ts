@@ -35,7 +35,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "overview", any: [], icon: "home" },
   { href: "/dashboard/products", label: "products", any: ["product.read"], icon: "products" },
   { href: "/dashboard/services", label: "services", any: ["product.read"], icon: "services" },
-  { href: "/dashboard/orders", label: "orders", any: ["order.read.branch", "order.read.all"], icon: "orders" },
+  { href: "/dashboard/orders", label: "orders", any: ["order.read.branch", "order.read.all", "order.web.handle"], icon: "orders" },
   { href: "/dashboard/ppf-bookings", label: "ppfBookings", any: ["booking.ppf.read"], icon: "ppf" },
   { href: "/dashboard/reservations", label: "reservations", any: ["booking.general.manage"], icon: "reservations" },
   { href: "/dashboard/users", label: "users", any: ["user.manage"], icon: "users" },

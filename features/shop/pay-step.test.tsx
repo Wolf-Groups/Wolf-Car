@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
 import { router } from "@/tests/setup";
-import { apiError, ORDER_ID, removeCardSdk, stubCardSdk, webOrder } from "@/tests/shop-fixtures";
+import { apiError, ORDER_ID, ORDER_KEY, removeCardSdk, stubCardSdk, webOrder } from "@/tests/shop-fixtures";
 import { PayStep } from "./pay-step";
 import { READY_TIMEOUT_MS, TOKENIZE_TIMEOUT_MS } from "./tap-card";
 import { TAP_SDK_URL } from "./tap-sdk";
@@ -75,6 +75,24 @@ describe("checkout: pay step", () => {
     await waitFor(() => expect(pay).toBeEnabled());
     await user.click(pay);
     await waitFor(() => expect(sent).toEqual([{ tokenId: "tok_fake_ok", locale: "ar" }]));
+  });
+
+  it("pays a guest's order with its key, and goes to a return page that carries it", async () => {
+    stubCardSdk();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post(`/api/shop/orders/${ORDER_ID}/pay`, ({ request }) => {
+        keys.push(request.headers.get("x-order-key"));
+        return HttpResponse.json({ redirectUrl: null, order: webOrder({ status: "CONFIRMED", paymentStatus: "PAID" }) });
+      }),
+    );
+    const { user } = renderOnSite(<PayStep order={webOrder()} orderKey={ORDER_KEY} publicKey="pk_test_wolfcar" locale="en" onBack={vi.fn()} />);
+    const pay = await screen.findByRole("button", { name: PAY });
+    await waitFor(() => expect(pay).toBeEnabled());
+    await user.click(pay);
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/checkout/return?order=${ORDER_ID}&key=${ORDER_KEY}`));
+    expect(keys).toEqual([ORDER_KEY]);
   });
 
   it("goes to the return page itself when Tap captured at once (no redirect)", async () => {
@@ -376,7 +394,7 @@ describe("checkout: pay step", () => {
     await user.click(pay);
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("You're no longer signed in with the number this order was made with. Reload the page to continue.");
+    expect(alert).toHaveTextContent("This order can't be opened from this page any more. Reload the page to continue.");
     await user.click(within(alert).getByRole("button", { name: "Reload the page" }));
     expect(reload).toHaveBeenCalledTimes(1);
     expect(sent).toHaveLength(1);

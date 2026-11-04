@@ -43,10 +43,10 @@ export function apiEnv(): Record<string, string> {
     AUTH_THROTTLE_LIMIT: "1000",
     RATE_LIMIT_PER_MINUTE: "100000",
     UPLOAD_DIR: "./storage/e2e-uploads",
-    // online checkout: the in-memory Tap stand-in, codes logged instead of texted,
-    // and echoed in the answer (the API runs as production here, which would hide them)
+    // online checkout: the in-memory Tap stand-in, emails logged instead of sent,
+    // and sign-in codes echoed in the answer (the API runs as production here, which would hide them)
     PAYMENTS_PROVIDER: "fake",
-    SMS_PROVIDER: "console",
+    EMAIL_PROVIDER: "console",
     OTP_DEV_CODE_IN_RESPONSE: "true",
     // the API refuses both of the above in production unless told this is the test run
     ALLOW_TEST_CHECKOUT: "true",

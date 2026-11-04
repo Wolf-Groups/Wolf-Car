@@ -1,4 +1,5 @@
 import { FAKE_TOKENS } from '../../../shared/shop';
+import { ConsoleEmailSender, EMAIL_SENDER, type EmailMessage } from '../../src/email/email-sender';
 import type { FakePaymentGateway } from '../../src/shop/payments/fake-gateway';
 import { PAYMENT_GATEWAY } from '../../src/shop/payments/payment-gateway';
 import type { TapCharge } from '../../src/shop/payments/tap-charge';
@@ -13,14 +14,21 @@ export const TAP_TEST_SECRET = 'fake-secret';
 /** Documentation only: api/test/setup/test-env.ts already sets these. The gateway is chosen when providers are built, before createTestApp overrides apply. */
 export const SHOP_ENV = {
   PAYMENTS_PROVIDER: 'fake',
-  SMS_PROVIDER: 'console',
+  EMAIL_PROVIDER: 'console',
   WEB_PUBLIC_URL: 'http://localhost:3000',
   API_PUBLIC_URL: 'http://localhost:3000',
   TAP_SECRET_KEY: TAP_TEST_SECRET,
 } as const;
 
+export const CUSTOMER_EMAIL = 'sara@example.com';
+export const OTHER_CUSTOMER_EMAIL = 'omar@example.com';
+/** What the checkout's mobile field is filled with. */
 export const CUSTOMER_PHONE = '+97455123456';
-export const OTHER_CUSTOMER_PHONE = '+97466123456';
+
+/** The last email the console sender (EMAIL_PROVIDER=console in the suite) kept for an address. */
+export function lastEmailTo(t: TestApp, address: string): EmailMessage | undefined {
+  return (t.app.get(EMAIL_SENDER) as ConsoleEmailSender).lastTo(address);
+}
 
 /** The `wc_cst=…` pair from a response's Set-Cookie headers, or '' when none was set. */
 export function customerCookieOf(res: { headers: Record<string, unknown> }): string {
@@ -29,15 +37,15 @@ export function customerCookieOf(res: { headers: Record<string, unknown> }): str
 }
 
 /** Sends a code, reads it from the body (console sender, test env), verifies it; returns the customer cookie. */
-export async function signInCustomer(t: TestApp, phone: string): Promise<string> {
-  const sent = await t.http().post('/api/shop/otp').set(csrf).send({ phone });
+export async function signInCustomer(t: TestApp, email: string): Promise<string> {
+  const sent = await t.http().post('/api/shop/otp').set(csrf).send({ email, locale: 'en' });
   if (sent.status !== 200 || typeof sent.body.devCode !== 'string') {
-    throw new Error(`send otp ${phone} failed: ${sent.status} ${JSON.stringify(sent.body)}`);
+    throw new Error(`send otp ${email} failed: ${sent.status} ${JSON.stringify(sent.body)}`);
   }
-  const verified = await t.http().post('/api/shop/otp/verify').set(csrf).send({ phone, code: sent.body.devCode });
-  if (verified.status !== 200) throw new Error(`verify otp ${phone} failed: ${verified.status} ${JSON.stringify(verified.body)}`);
+  const verified = await t.http().post('/api/shop/otp/verify').set(csrf).send({ email, code: sent.body.devCode });
+  if (verified.status !== 200) throw new Error(`verify otp ${email} failed: ${verified.status} ${JSON.stringify(verified.body)}`);
   const cookie = customerCookieOf(verified);
-  if (!cookie) throw new Error(`verify otp ${phone} set no wc_cst cookie: ${JSON.stringify(verified.headers['set-cookie'])}`);
+  if (!cookie) throw new Error(`verify otp ${email} set no wc_cst cookie: ${JSON.stringify(verified.headers['set-cookie'])}`);
   return cookie;
 }
 
@@ -51,31 +59,43 @@ export const fakeGateway = (t: TestApp) => t.app.get(PAYMENT_GATEWAY) as FakePay
 export interface WebOrderBody {
   items: { productId: string; quantity: number }[];
   name: string;
+  phone: string;
   email: string;
+  paymentMethod: 'card' | 'branch';
+  locale: 'ar' | 'en';
 }
 
-/** Dash Cam ×1 + Floor Mats ×1 = 619.50. */
+/** Dash Cam ×1 + Floor Mats ×1 = 619.50, paid by card. The phone as typed; the API stores CUSTOMER_PHONE. */
 export const defaultBasket = (world: World): WebOrderBody => ({
   items: [
     { productId: world.products[0].id, quantity: 1 },
     { productId: world.products[1].id, quantity: 1 },
   ],
   name: 'Sara Al-Mansouri',
-  email: 'sara@example.com',
+  phone: '5512 3456',
+  email: CUSTOMER_EMAIL,
+  paymentMethod: 'card',
+  locale: 'en',
 });
 
+/** A request with the customer cookie when there is one ('' for a guest) and the order key when given. */
+function withAccess<T extends { set(name: string, value: string): T }>(req: T, cookie: string, orderKey?: string): T {
+  const signed = cookie ? req.set('Cookie', cookie) : req;
+  return orderKey ? signed.set('X-Order-Key', orderKey) : signed;
+}
+
 export function createWebOrder(t: TestApp, cookie: string, body: WebOrderBody, idempotencyKey?: string) {
-  const req = t.http().post('/api/shop/orders').set('Cookie', cookie).set(csrf).send(body);
+  const req = withAccess(t.http().post('/api/shop/orders'), cookie).set(csrf).send(body);
   return idempotencyKey ? req.set('Idempotency-Key', idempotencyKey) : req;
 }
 
-export const payWebOrder = (t: TestApp, cookie: string, orderId: string, tokenId: string = FAKE_TOKENS.ok, locale: 'ar' | 'en' = 'en') =>
-  t.http().post(`/api/shop/orders/${orderId}/pay`).set('Cookie', cookie).set(csrf).send({ tokenId, locale });
+export const payWebOrder = (t: TestApp, cookie: string, orderId: string, tokenId: string = FAKE_TOKENS.ok, locale: 'ar' | 'en' = 'en', orderKey?: string) =>
+  withAccess(t.http().post(`/api/shop/orders/${orderId}/pay`), cookie, orderKey).set(csrf).send({ tokenId, locale });
 
-export const reconcileWebOrder = (t: TestApp, cookie: string, orderId: string) =>
-  t.http().post(`/api/shop/orders/${orderId}/reconcile`).set('Cookie', cookie).set(csrf);
+export const reconcileWebOrder = (t: TestApp, cookie: string, orderId: string, orderKey?: string) =>
+  withAccess(t.http().post(`/api/shop/orders/${orderId}/reconcile`), cookie, orderKey).set(csrf);
 
-export const getWebOrder = (t: TestApp, cookie: string, orderId: string) => t.http().get(`/api/shop/orders/${orderId}`).set('Cookie', cookie);
+export const getWebOrder = (t: TestApp, cookie: string, orderId: string, orderKey?: string) => withAccess(t.http().get(`/api/shop/orders/${orderId}`), cookie, orderKey);
 
 /** The newest attempt's Tap charge id for an order (set by `pay`). */
 export async function chargeIdOf(t: TestApp, orderId: string): Promise<string> {

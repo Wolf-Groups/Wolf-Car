@@ -28,7 +28,8 @@ const qatarDay = (d: string) => new Date(`${d}T00:00:00+03:00`);
 
 /**
  * Hides abandoned checkouts: web orders cancelled (expired or by the customer)
- * before any card was charged. Asking for cancelled or web orders shows them.
+ * before any card was charged, also on the website tab staff work from. Asking
+ * for cancelled orders shows them.
  * An order Tap captured anyway (an amount mismatch after expiry) stays visible:
  * its money has to be refunded.
  */
@@ -39,9 +40,14 @@ const NOT_ABANDONED_CHECKOUT = {
 const webOrderReadonly = () =>
   new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_READONLY', message: 'Web orders cannot be edited: the total is what the card was charged.' });
 const webOrderUnpaid = () =>
-  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_UNPAID', message: 'A web order is confirmed by its card payment, not by staff.' });
+  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_UNPAID', message: 'A card web order is confirmed by its payment, not by staff.' });
 const orderNotCollectable = () =>
-  new ConflictException({ statusCode: 409, error: 'Conflict', code: 'ORDER_NOT_COLLECTABLE', message: 'Only a paid web order that has not been collected can be handed over.' });
+  new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: 'ORDER_NOT_COLLECTABLE',
+    message: 'Only a web order that is paid, or confirmed to pay at the branch, and not yet collected can be handed over.',
+  });
 
 @Injectable()
 export class OrdersService {
@@ -57,7 +63,7 @@ export class OrdersService {
     if (q.branchId && canReadAllBranches(user)) and.push({ branchId: q.branchId });
     if (q.status) and.push({ status: q.status });
     if (q.source) and.push({ source: q.source });
-    if (q.status !== 'CANCELLED' && q.source !== 'WEB') and.push(NOT_ABANDONED_CHECKOUT);
+    if (q.status !== 'CANCELLED') and.push(NOT_ABANDONED_CHECKOUT);
     if (q.from) and.push({ createdAt: { gte: DAY.test(q.from) ? qatarDay(q.from) : new Date(q.from) } });
     if (q.to) {
       and.push(
@@ -175,10 +181,13 @@ export class OrdersService {
     return after;
   }
 
-  /** A web order is confirmed by its payment (PaymentsService.settle), never by staff: 409 WEB_ORDER_UNPAID. */
+  /**
+   * A card web order is confirmed by its payment (PaymentsService.settle), never by staff: 409 WEB_ORDER_UNPAID.
+   * A pay-at-branch web order (paymentStatus NONE) is confirmed by staff once they have called the customer.
+   */
   async confirm(user: AuthUser, id: string): Promise<OrderDetail> {
     const order = await this.findWritable(user, id);
-    if (order.source === 'WEB') throw webOrderUnpaid();
+    if (order.source === 'WEB' && order.paymentStatus !== 'NONE') throw webOrderUnpaid();
     return this.transition(user, id, 'CONFIRMED', { confirmedById: user.id, confirmedAt: new Date() }, ['PENDING']);
   }
 
@@ -221,15 +230,15 @@ export class OrdersService {
   }
 
   /**
-   * Hands a paid web order over at the counter: one conditional update
-   * (source WEB, PAID, CONFIRMED, not yet collected) → collectedAt/collectedById.
-   * 404 outside the user's branch, else 409 ORDER_NOT_COLLECTABLE.
+   * Hands a web order over at the counter: one conditional update (source WEB,
+   * PAID by card or NONE — paid at the till now —, CONFIRMED, not yet collected)
+   * → collectedAt/collectedById. 404 outside the user's branch, else 409 ORDER_NOT_COLLECTABLE.
    */
   async collect(user: AuthUser, id: string): Promise<OrderDetail> {
     const scope = orderWriteScope(user);
     const { count } = await this.prisma.order.updateMany({
       // the scope comes after `id`: a user without a branch gets { id: { in: [] } }, which matches nothing
-      where: { id, ...scope, source: 'WEB', paymentStatus: 'PAID', status: 'CONFIRMED', collectedAt: null },
+      where: { id, ...scope, source: 'WEB', paymentStatus: { in: ['PAID', 'NONE'] }, status: 'CONFIRMED', collectedAt: null },
       data: { collectedAt: new Date(), collectedById: user.id },
     });
     if (count === 0) {

@@ -1,6 +1,7 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -193,8 +194,31 @@ export class Env {
   @Max(1440)
   CHECKOUT_TTL_MINUTES = 30;
 
-  @IsIn(['console'])
-  SMS_PROVIDER = 'console' as const;
+  /** How emails leave: "console" writes them to the log (development, tests), "brevo" sends them. */
+  @IsIn(['console', 'brevo'])
+  EMAIL_PROVIDER: 'console' | 'brevo' = 'console';
+
+  /** Brevo → SMTP & API → API keys ("xkeysib-…"). Never logged. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  BREVO_API_KEY?: string;
+
+  /** The sender address, on a domain authenticated in Brevo (e.g. orders@wolfcar.qa). */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsEmail()
+  EMAIL_FROM?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_FROM_NAME = 'Wolf Car';
+
+  /** Comma-separated addresses told about every new website order; empty means nobody. */
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  SHOP_NOTIFY_EMAIL?: string;
 
   /** Returns the one-time code in the API response. Development only. */
   @Transform(toBool)
@@ -212,7 +236,7 @@ export class Env {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  OTP_PER_PHONE_PER_15_MIN = 3;
+  OTP_PER_EMAIL_PER_15_MIN = 3;
 
   @Type(() => Number)
   @IsInt()
@@ -252,9 +276,9 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${details}`);
   }
-  const testCheckout = testCheckoutErrors(env);
-  if (testCheckout.length > 0) {
-    throw new Error(`Invalid environment configuration:\n${testCheckout.map((e) => `  - ${e}`).join('\n')}`);
+  const combined = [...testCheckoutErrors(env), ...emailErrors(env)];
+  if (combined.length > 0) {
+    throw new Error(`Invalid environment configuration:\n${combined.map((e) => `  - ${e}`).join('\n')}`);
   }
   return env;
 }
@@ -278,6 +302,23 @@ function testCheckoutErrors(env: Env): string[] {
     else if (productionWithoutPermit) errors.push('OTP_DEV_CODE_IN_RESPONSE: must be false in production (ALLOW_TEST_CHECKOUT is for the browser tests only)');
   }
   return errors;
+}
+
+/** Brevo cannot send without its key and a sender address. */
+function emailErrors(env: Env): string[] {
+  if (env.EMAIL_PROVIDER !== 'brevo') return [];
+  const errors: string[] = [];
+  if (!env.BREVO_API_KEY) errors.push('BREVO_API_KEY: required when EMAIL_PROVIDER is brevo');
+  if (!env.EMAIL_FROM) errors.push('EMAIL_FROM: required when EMAIL_PROVIDER is brevo');
+  return errors;
+}
+
+/** SHOP_NOTIFY_EMAIL as a list. */
+export function notifyEmails(env: Pick<Env, 'SHOP_NOTIFY_EMAIL'>): string[] {
+  return (env.SHOP_NOTIFY_EMAIL ?? '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
 }
 
 export function corsOrigins(env: Pick<Env, 'CORS_ORIGINS'>): string[] {

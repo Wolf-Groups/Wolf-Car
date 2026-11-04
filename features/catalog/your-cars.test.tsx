@@ -25,7 +25,7 @@ describe("catalogue: your cars first", () => {
       { id: L8, name: "ليوبارد 8", nameEn: "Leopard 8", thumbUrl: null },
       { id: L5, name: "ليوبارد 5", nameEn: null, thumbUrl: null },
     ]);
-    renderOnSite(<YourCars enabled selected={L8} />);
+    renderOnSite(<YourCars selected={L8} />);
     expect(await screen.findByText("Your cars")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Leopard 8" })).toHaveAttribute("href", `/products?category=${L8}`);
     expect(screen.getByRole("link", { name: "Leopard 8" })).toHaveAttribute("aria-current", "page");
@@ -34,18 +34,13 @@ describe("catalogue: your cars first", () => {
 
   it("asks a signed-in customer without cars to add one", async () => {
     signedIn([]);
-    renderOnSite(<YourCars enabled />);
+    renderOnSite(<YourCars />);
     expect(await screen.findByRole("link", { name: "Add your car to see its parts first" })).toHaveAttribute("href", "/account");
   });
 
-  it("shows nothing to a visitor who is not signed in, or while card checkout is off", async () => {
-    const { container, unmount } = renderOnSite(<YourCars enabled />);
+  it("shows nothing to a visitor who is not signed in", async () => {
+    const { container } = renderOnSite(<YourCars />);
     await new Promise((r) => setTimeout(r, 20));
     expect(container).toBeEmptyDOMElement();
-    unmount();
-    signedIn([{ id: L8, name: "ليوبارد 8", nameEn: "Leopard 8", thumbUrl: null }]);
-    const off = renderOnSite(<YourCars enabled={false} />);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(off.container).toBeEmptyDOMElement();
   });
 });

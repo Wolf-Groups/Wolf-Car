@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiProduces, ApiQuery, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import { RequireAnyPermission } from '../common/decorators/require-permissions.decorator';
 import type { AuthUser } from '../common/types';
 import type { ReceiptLocale } from './receipt-template';
 import { ReceiptsService } from './receipts.service';
@@ -17,7 +17,7 @@ export class ReceiptsController {
   /** PDF receipt (branch, order number, date, customer, lines with qty/unit/line totals, grand total). */
   @ApiProduces('application/pdf')
   @ApiQuery({ name: 'locale', enum: ['ar', 'en'], required: false })
-  @RequirePermissions('order.receipt.download')
+  @RequireAnyPermission('order.receipt.download', 'order.web.handle')
   @Audit('order.receipt.download', { entity: 'Order', idParam: 'id' })
   @Get(':id/receipt')
   async download(

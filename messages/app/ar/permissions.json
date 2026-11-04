@@ -44,7 +44,8 @@
     "permission_manage": "إدارة الصلاحيات",
     "activity_read": "عرض سجل النشاط",
     "analytics_read": "عرض إحصاءات زوار الموقع",
-    "showroom_password_view_or_change": "تغيير كلمة مرور المعرض الخاصة به"
+    "showroom_password_view_or_change": "تغيير كلمة مرور المعرض الخاصة به",
+    "order_web_handle": "التعامل مع طلبات الموقع (كل الفروع)"
   },
   "noAccessTitle": "لا يمكنك فتح هذه الصفحة",
   "noAccessBody": "تتطلّب هذه الصفحة صلاحية «{permission}». تواصل مع المشرف العام إن احتجت إليها.",

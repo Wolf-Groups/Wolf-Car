@@ -114,6 +114,8 @@ describe('OrdersService', () => {
       ['the pending filter', { status: 'PENDING' }],
       ['the confirmed filter', { status: 'CONFIRMED' }],
       ['showroom orders', { source: 'SHOWROOM' }],
+      // the dashboard's default tab: abandoned checkouts must not crowd the orders staff work on
+      ['website orders', { source: 'WEB' }],
       ['one day', { from: '2026-10-20', to: '2026-10-20' }],
     ])('leaves them out by default (%s)', async (_label, query) => {
       expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).toContainEqual(abandoned);
@@ -121,7 +123,7 @@ describe('OrdersService', () => {
 
     it.each([
       ['status=CANCELLED', { status: 'CANCELLED' }],
-      ['source=WEB', { source: 'WEB' }],
+      ['status=CANCELLED on the website tab', { status: 'CANCELLED', source: 'WEB' }],
     ])('shows them when the list asks for %s', async (_label, query) => {
       expect((await whereFor(query as Partial<ListOrdersQueryDto>)).AND).not.toContainEqual(abandoned);
     });
@@ -380,7 +382,16 @@ describe('OrdersService', () => {
       await conflict(service.update(boCashier, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
     });
 
-    it('cannot be confirmed by staff: 409 WEB_ORDER_UNPAID', async () => {
+    it('a pay-at-branch order (paymentStatus NONE) is confirmed by staff after calling the customer', async () => {
+      prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'PENDING', paymentStatus: 'NONE', payments: [] }) as never);
+      prisma.order.updateMany.mockResolvedValue({ count: 1 });
+      await service.confirm(boCashier, 'o-1');
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.data).toMatchObject({ status: 'CONFIRMED', confirmedById: 'u-bo' });
+      expect(JSON.stringify(call.where)).toContain('"status":{"in":["PENDING"]}');
+    });
+
+    it('a card web order cannot be confirmed by staff: 409 WEB_ORDER_UNPAID', async () => {
       prisma.order.updateMany.mockResolvedValue({ count: 0 });
       prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'PENDING', paymentStatus: 'PENDING', payments: [] }) as never);
       await conflict(service.confirm(boCashier, 'o-1'), 'WEB_ORDER_UNPAID');
@@ -391,12 +402,12 @@ describe('OrdersService', () => {
       expect(trail.setChange).not.toHaveBeenCalledWith({ status: 'PENDING' }, { status: 'CONFIRMED' });
     });
 
-    it('collect: one conditional update marks a paid web order handed over', async () => {
+    it('collect: one conditional update marks a paid, or confirmed pay-at-branch, web order handed over', async () => {
       prisma.order.updateMany.mockResolvedValue({ count: 1 });
       prisma.order.findFirst.mockResolvedValue(webOrderRow({ collectedAt: new Date() }) as never);
       await service.collect(boCashier, 'o-1');
       const call = prisma.order.updateMany.mock.calls[0][0];
-      expect(call.where).toEqual({ id: 'o-1', branchId: 'bo', source: 'WEB', paymentStatus: 'PAID', status: 'CONFIRMED', collectedAt: null });
+      expect(call.where).toEqual({ id: 'o-1', branchId: 'bo', source: 'WEB', paymentStatus: { in: ['PAID', 'NONE'] }, status: 'CONFIRMED', collectedAt: null });
       expect(call.data).toEqual({ collectedAt: expect.any(Date) as Date, collectedById: 'u-bo' });
       expect(trail.setEntity).toHaveBeenCalledWith('Order', 'o-1');
     });

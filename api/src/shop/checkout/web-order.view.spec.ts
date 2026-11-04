@@ -33,6 +33,7 @@ describe('webOrderView', () => {
       code: 'BO-000001',
       status: 'PENDING',
       paymentStatus: 'PENDING',
+      paymentMethod: 'card',
       total: '619.50',
       currency: 'QAR',
       createdAt: '2026-10-18T10:00:00.000Z',
@@ -60,7 +61,12 @@ describe('webOrderView', () => {
     expect(view.collectedAt).toBe('2026-10-19T08:00:00.000Z');
   });
 
-  it('never leaks a staff name or the customer id', () => {
+  it('names an order without online payment (NONE) as paid at the branch, every other as card', () => {
+    expect(webOrderView(row({ paymentStatus: 'NONE', expiresAt: null })).paymentMethod).toBe('branch');
+    for (const paymentStatus of ['PENDING', 'PAID', 'REFUNDED'] as const) expect(webOrderView(row({ paymentStatus })).paymentMethod).toBe('card');
+  });
+
+    it('never leaks a staff name or the customer id', () => {
     const view = webOrderView(row()) as unknown as Record<string, unknown>;
     expect(view).not.toHaveProperty('customerId');
     expect(view).not.toHaveProperty('createdBy');

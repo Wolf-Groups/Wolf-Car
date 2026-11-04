@@ -27,6 +27,10 @@ export const PERMISSIONS = {
   'order.confirm': { group: 'order', description: 'Confirm pending orders (makes them immutable)' },
   'order.receipt.download': { group: 'order', description: 'Download order receipts as PDF' },
   'order.odoo.retry': { group: 'order', description: 'Send a paid web order to Odoo again after it failed' },
+  'order.web.handle': {
+    group: 'order',
+    description: "Handle the website's orders of every branch: view all orders, confirm pay-at-branch ones, cancel unconfirmed ones, mark them collected",
+  },
   'booking.ppf.read': { group: 'booking', description: 'View the PPF calendar, bookings and light-job requests' },
   'booking.ppf.manage': {
     group: 'booking',
@@ -75,7 +79,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Exclude<RoleName, 'SUPER_ADMIN'>, 
     'order.receipt.download',
     'showroom.password.view_or_change',
   ],
-  RESERVATIONS: ['booking.ppf.read', 'booking.ppf.manage', 'booking.general.manage'],
+  // the call center also handles the website's orders (calls the customer, confirms)
+  RESERVATIONS: ['booking.ppf.read', 'booking.ppf.manage', 'booking.general.manage', 'order.web.handle'],
 };
 
 export const ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'CANCELLED'] as const;

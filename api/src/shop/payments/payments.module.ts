@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env';
 import { OdooModule } from '../../odoo/odoo.module';
+import { OrderEmailsService } from '../emails/order-emails.service';
 import { FakePaymentGateway } from './fake-gateway';
 import { PAYMENT_GATEWAY, type PaymentGateway } from './payment-gateway';
 import { PaymentsService } from './payments.service';
@@ -31,7 +32,8 @@ export function paymentGatewayFactory(config: ConfigService<Env, true>): Payment
   providers: [
     { provide: PAYMENT_GATEWAY, inject: [ConfigService], useFactory: paymentGatewayFactory },
     PaymentsService,
+    OrderEmailsService,
   ],
-  exports: [PAYMENT_GATEWAY, PaymentsService],
+  exports: [PAYMENT_GATEWAY, PaymentsService, OrderEmailsService],
 })
 export class PaymentsModule {}
