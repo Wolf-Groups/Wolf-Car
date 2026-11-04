@@ -340,7 +340,7 @@ Design: `docs/superpowers/specs/2026-11-04-email-guest-checkout-design.md`.
 2. The API creates the order from the server's prices (the browser never sends a price). It belongs to the customer of that email (found or created, never changed by a guest), so it shows up in "My account" once that email signs in. The answer carries the **order key** (an HMAC of the order id with `JWT_ACCESS_SECRET`): the page keeps it in the address (`?order=…&key=…`) and sends it as `X-Order-Key`, which is how a guest reaches their own order.
 3. **Pay at the branch:** the order is `paymentStatus NONE`, never expires, and the customer lands on the thank-you page (`/ar/checkout/return`). They get an email with the order; the shop (`SHOP_NOTIFY_EMAIL`) gets an alert. The cashier calls, *confirms* the order in the dashboard, takes the payment at the till, and marks it *collected*. It is never sent to Odoo as a web sale (the till rings it up).
 4. **Card:** the order is held for `CHECKOUT_TTL_MINUTES`. Tap's card form (loaded from Tap's CDN with the public key) turns the card into a token; the card number never reaches our servers. The API creates the charge and the customer goes through 3-D Secure at Tap, then back to the thank-you page.
-5. A card order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order. Then the customer gets the receipt by email, the shop an alert, and the order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code.
+5. A card order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order. The expiry sweep reads the charge back too before it cancels an unpaid order, so a customer who paid and closed the page before coming back still gets a paid order, even if the webhook never arrives; when Tap cannot be asked, the order waits for the next minute. Then the customer gets the receipt by email, the shop an alert, and the order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code.
 6. **My account** (`/account`): sign in with the email and a 6-digit code sent there; the customer's orders (also those placed as a guest with that email) and cars. There is no SMS anywhere. Customers from the earlier phone sign-in (it never launched on the live site, so there should be none) keep their rows and orders but have no email: they cannot sign in, and ordering with an email starts a new customer (migration `20261104100000_email_customers`).
 
 Emails go through Brevo's transactional API (`EMAIL_PROVIDER=brevo`; free plan: 300 a day). Order emails are best effort: a failure is logged and never fails the order or the payment. The sign-in code email does fail the request, so the customer knows.
@@ -389,7 +389,7 @@ Restart the API. Emails (sign-in codes, order emails) appear in the API log. The
 1. In Tap's dashboard take the **test** keys. Put the secret key in `api/.env` as `TAP_SECRET_KEY=sk_test_…` with `PAYMENTS_PROVIDER=tap`, and the public key in `.env.local` (repo root, git-ignored) as `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_test_…` (optionally `NEXT_PUBLIC_TAP_MERCHANT_ID=…`). Never commit either file.
 2. Tap must reach the webhook from the internet, so expose the API: `ngrok http 4000`, then set `API_PUBLIC_URL=https://<your-tunnel>` in `api/.env` and restart the API. Keep `WEB_PUBLIC_URL=http://localhost:3000`.
 3. Nothing is configured in Tap's dashboard for the webhook: the API passes the webhook URL (`post.url`) with every charge.
-4. Test cards: Visa `4508750015741019` (expiry `01/39`, any CVC) goes through a 3-D Secure challenge; Visa `4012000033330026` (`01/39`, CVC `100`) goes through without one. In our sandbox account both have been ending in `701 RESTRICTED` after the bank's check (see the questions for Tap below). More cards: `developers.tap.company/reference/testing-cards`.
+4. Test cards: Visa `4012000033330026` (`01/39`, CVC `100`) is **captured** (checked 2026-11-04: paid, receipt, refund). Visa `4508750015741019` and Mastercard `5123450000000008` (`01/39`, any CVC) pass 3-D Secure but end in `701 RESTRICTED` in our sandbox account (see the questions for Tap below). More cards: `developers.tap.company/reference/testing-cards`.
 
 If the webhook never arrives (tunnel down), the return page reads the charge back from Tap, so the customer still sees *paid*.
 
@@ -414,18 +414,19 @@ Server (`deploy/api.prod.env`, see `deploy/api.prod.env.example`):
 
 Check in the Tap sandbox before launch (the fake gateway cannot tell you):
 
-- [ ] A full 3-D Secure payment with the test card lands on `/checkout/return` and shows *paid*, and the webhook arrives and is accepted (its `hashstring` checks out).
-- [ ] Tap refuses a second refund of the same charge (two staff cancelling at once rely on it).
+- [x] A full 3-D Secure payment with the test card lands on `/checkout/return` and shows *paid* (2026-11-04, a guest, Visa `4012000033330026`; the receipt email went out).
+- [ ] The webhook arrives and is accepted (its `hashstring` checks out). Needs a public tunnel to the API (step 2 above); not tested yet. On the live site: after the first real payment, look for `shop.payment.webhook` with outcome *paid* or *already_paid* in the activity log.
+- [x] Tap refuses a second refund of the same charge (2026-11-04): right after the first it answers `1202 Duplicate Request`, later `1161 Requested refund amount exceeds with available captured amount`.
 - [ ] The card form's valid/invalid events: *Pay* recovers after a corrected card.
-- [ ] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`).
-- [ ] The refund object's `status` values. The API treats `INITIATED`, `PENDING`, `IN_PROGRESS` and `REFUNDED` (any case) as accepted and anything else as `502 REFUND_FAILED` with the status as the reason: check which values a sandbox refund really returns, and that a refused one is not among the four.
-- [ ] The return URL survives Tap appending `tap_id`: Tap sends the customer back to `/checkout/return?order=<id>&tap_id=chg_…`, and the page must still read `order`.
-- [ ] Whether the card SDK requires `merchant.id` (`NEXT_PUBLIC_TAP_MERCHANT_ID`, optional today): if it does, set it before launch.
+- [x] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`): the local site sends the same headers, and the payment above went through under them.
+- [x] The refund object's `status` values: a sandbox refund answers `REFUNDED` (response `000`), which the API accepts. The API treats `INITIATED`, `PENDING`, `IN_PROGRESS` and `REFUNDED` (any case) as accepted and anything else as `502 REFUND_FAILED` with the status as the reason.
+- [x] The return URL survives Tap appending `tap_id`: Tap sends the customer back to `/checkout/return?order=<id>&key=<key>&tap_id=chg_…`, and the page reads `order` and `key`.
+- [x] The card SDK does not need `merchant.id` in the sandbox: the site never sends it (`NEXT_PUBLIC_TAP_MERCHANT_ID` is unused). Ask Tap whether live keys do.
 
 Questions and reports for Tap (card SDK 1.0.2, one ticket):
 
 - [ ] **Does our account need the cardholder name?** The card form asks for it (`fields: { cardHolder: true }` in `features/shop/tap-card.tsx`), Tap's field takes English letters only, and the page tells customers so and pre-fills the name when it is already in English letters. If Tap says it is not needed for 3-D Secure or acceptance, set `cardHolder: false` and drop the English-letters sentence from `Checkout.cardHint` and from `errors.TAP_CARD_INVALID`, `errors.PAYMENT_FAILED` and `errors.CARD_REENTER`.
-- [ ] **Why do sandbox test cards end in `701 RESTRICTED`** (gateway `BLOCKED`) after a successful 3-D Secure? Until this is solved no sandbox payment reaches *paid*.
+- [ ] **Why do the 3-D Secure challenge test cards end in `701 RESTRICTED`** (gateway `BLOCKED`) after a successful 3-D Secure? Since 2026-11-04 Visa `4012000033330026` is captured again (it was refused the same way from 2026-10-28), but `4508750015741019` and `5123450000000008` still are. Will real cards that get a bank challenge be refused like this with live keys?
 - [ ] **Can a charge end `AUTHORIZED` without capture, or `UNKNOWN`/`VOID` after the money was held?** The result page says only "The payment didn't go through" until Tap answers.
 - [ ] Defects inside Tap's form to report: while the number is being corrected, the hidden expiry field stays tappable (one tap there, then Backspace, edits the date); the clear-all X has no label and touches the CVV on narrow phones; the Arabic CVV placeholder is cut when the form is wider than about 311px; the "change your keyboard to English" hint is English only and low contrast.
 
@@ -434,7 +435,6 @@ After any card SDK version change (`TAP_SDK_URL` in `features/shop/tap-sdk.ts`),
 ### Limits of phase 1
 
 - Pickup at Bin Omran only; no delivery, no stock check; products without a price are ordered on WhatsApp.
-- No e-mail receipt: the customer shows the order code at the branch.
 - Refunding an order that is already in Odoo does **not** reverse the Odoo sale order; the accountant reverses it by hand. The dashboard says so in the cancel dialog and on the refunded order ("Refunded after it reached Odoo: cancel sale order N in Odoo").
 - Apple Pay and Google Pay, delivery and stock come in phase 2; public PPF booking with a deposit in phase 3.
 - Design and open questions: `docs/superpowers/specs/2026-10-18-online-checkout-phase1-design.md`.

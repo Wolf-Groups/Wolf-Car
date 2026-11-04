@@ -19,6 +19,9 @@ plan: `docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README sectio
 - The **call center** (role Reservations) gets the new permission `order.web.handle`: it reads every order and
   confirms, cancels and hands over website orders. Granted by itself on the first start of the new API.
 - Showroom kiosk grid: 2 cards per row on phones, ~6 per row on the big screen.
+- Card orders: before the expiry sweep cancels an unpaid card order it asks Tap about the payment. A customer who
+  paid and closed the page before coming back (and whose webhook never came) gets a paid order and the receipt,
+  not a cancelled one. Checked against Tap's sandbox on 2026-11-04.
 - DB migration `20261104100000_email_customers`: email becomes the customer identity. **Irreversible**: drops the
   phone unique index, deletes all `customer_otps`, lower-cases and de-duplicates customer emails.
 
@@ -71,9 +74,15 @@ Safe to add before the new code is deployed (the running version ignores them). 
 ## 5. Still open from before (not blocking this deploy)
 
 - [ ] **Card payments stay off** until `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` is in `deploy/prod.env` (baked in at
-      build) and `TAP_SECRET_KEY=sk_live_…` in `api.prod.env`. Tap's sandbox has answered `701 RESTRICTED` on every
-      card since 2026-10-28: ask Tap (Ramy) first; questions in README section 11. Without the key the site takes
-      pay-at-branch orders only.
+      build) and `TAP_SECRET_KEY=sk_live_…` in `api.prod.env`. Without the key the site takes pay-at-branch orders only.
+      Sandbox on 2026-11-04 (local site, guest checkout): Visa `4012000033330026` is **captured** again → paid page,
+      receipt email, refund from the dashboard (`REFUNDED`), Tap refuses a second refund. The 3-D Secure challenge cards
+      (`4508750015741019`, `5123450000000008`) still end in `701 RESTRICTED`: ask Tap (Ramy) whether real cards that
+      get a bank challenge will be refused like this with live keys (questions in README section 11).
+- [ ] **Tap's webhook** is still untested (Tap must reach the API from the internet; this Mac had no tunnel). Either
+      test it locally with a tunnel (README section 11, "Run it locally with Tap test keys"), or after the first live
+      payment check the activity log for `shop.payment.webhook` (outcome *paid* / *already_paid*), not only
+      `shop.order.reconcile`. A `401 BAD_SIGNATURE` in the API log on that route means the hashstring check is off.
 - [ ] **SSH hardening**: port 22 is still public; run `deploy/harden-ssh.sh` as in README "Server access (SSH)".
 - [ ] **Refund policy page** (`/ar/refund-policy`) is a draft: the owner confirms the terms.
 - [ ] **Odoo** writing for paid card orders: `ODOO_WRITE_LOGIN`, `ODOO_WRITE_API_KEY`, `ODOO_WEB_WAREHOUSE_ID`, `ODOO_FALLBACK_PRODUCT_ID`.

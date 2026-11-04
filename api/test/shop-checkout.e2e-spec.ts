@@ -702,9 +702,40 @@ describe('Online checkout (e2e)', () => {
       expect(await dbOrder(showroom.id)).toMatchObject({ status: 'PENDING', cancelledAt: null });
     });
 
+    it('pays, rather than cancels, an expired order whose payment Tap captured though no webhook came', async () => {
+      const order = await createOk();
+      // captured at Tap, but the customer closed the page before coming back and no webhook arrived
+      await payWebOrder(t, sara, order.id);
+      await expire(order.id);
+      await t.prisma.payment.updateMany({ where: { orderId: order.id }, data: { createdAt: new Date(Date.now() - 20 * MINUTE) } });
+
+      expect(await sweep()).toBe(0);
+
+      const row = await dbOrder(order.id);
+      expect(row).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID', cancelledAt: null });
+      expect(row.odooOutbox).toMatchObject({ status: 'PENDING' });
+      expect(lastEmailTo(t, CUSTOMER_EMAIL)?.subject).toContain(`Receipt for your order ${order.code}`);
+      const log = await logOf('shop.order.reconcile');
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({ outcome: 'SUCCESS', entityId: order.id, actorUsername: 'system.web', metadata: { via: 'expiry', outcome: 'paid' } });
+      expect(await logOf('shop.order.expire')).toHaveLength(0);
+    });
+
+    it('keeps an expired order whose payment Tap cannot be asked about, for the next round', async () => {
+      const order = await createOk();
+      await payWebOrder(t, sara, order.id, FAKE_TOKENS.pending);
+      await expire(order.id);
+      // a charge the gateway does not know is answered with an error, as when Tap cannot be reached
+      await t.prisma.payment.updateMany({ where: { orderId: order.id }, data: { chargeId: `chg_gone_${order.id}`, createdAt: new Date(Date.now() - 20 * MINUTE) } });
+
+      expect(await sweep()).toBe(0);
+      expect(await dbOrder(order.id)).toMatchObject({ status: 'PENDING', paymentStatus: 'PENDING', cancelledAt: null });
+    });
+
     it('a captured webhook after expiry still pays the order (afterExpiry)', async () => {
       const order = await createOk();
-      await payWebOrder(t, sara, order.id);
+      // still open at Tap when the sweep asks, so the order is cancelled
+      await payWebOrder(t, sara, order.id, FAKE_TOKENS.pending);
       await expire(order.id);
       await t.prisma.payment.updateMany({ where: { orderId: order.id }, data: { createdAt: new Date(Date.now() - 20 * MINUTE) } });
       expect(await sweep()).toBe(1);

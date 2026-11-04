@@ -18,7 +18,13 @@ import { chargeOutcome, formatTapAmount, sameAmount, type TapCharge } from './ta
 import { verifyTapSignature } from './tap-signature';
 
 export type SettleOutcome = 'paid' | 'already_paid' | 'failed' | 'pending' | 'amount_mismatch' | 'duplicate_capture' | 'unknown_charge';
-export type SettleVia = 'webhook' | 'reconcile' | 'create';
+export type SettleVia = 'webhook' | 'reconcile' | 'create' | 'expiry';
+
+/** What settleBeforeExpiry learnt: reachable false when Tap could not be asked (the sweep keeps the order). */
+export interface ExpiryCheck {
+  reachable: boolean;
+  settled: { chargeId: string; outcome: SettleOutcome }[];
+}
 
 /** What a settle transaction decided; the audit entry is written from it after the commit. */
 interface Settled {
@@ -198,6 +204,35 @@ export class PaymentsService {
     }
     await this.settle(charge, 'reconcile');
     return webOrderView(await this.prisma.order.findUniqueOrThrow({ where: { id: order.id }, select: WEB_ORDER_SELECT }));
+  }
+
+  /**
+   * For the expiry sweep, before it cancels an unpaid card order: reads every attempt Tap still has open back from
+   * Tap, newest first, and settles each. A customer who paid and closed the page before coming back, and whose
+   * webhook never came, still gets a paid order. Stops at the first charge Tap cannot be asked about (reachable
+   * false). Without a gateway nobody can be asked: reachable, nothing settled, as before.
+   */
+  async settleBeforeExpiry(orderId: string): Promise<ExpiryCheck> {
+    const open = await this.prisma.payment.findMany({
+      where: { orderId, status: 'INITIATED', chargeId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { chargeId: true },
+    });
+    const settled: ExpiryCheck['settled'] = [];
+    if (!this.gateway) return { reachable: true, settled };
+    for (const { chargeId } of open) {
+      if (!chargeId) continue;
+      let charge: TapCharge;
+      try {
+        charge = await this.gateway.getCharge(chargeId);
+      } catch (err) {
+        if (!(err instanceof PaymentGatewayError)) throw err;
+        this.logger.warn(`Before expiring order ${orderId}: the provider answered ${err.code} for ${chargeId}`);
+        return { reachable: false, settled };
+      }
+      settled.push({ chargeId, outcome: (await this.settle(charge, 'expiry')).outcome });
+    }
+    return { reachable: true, settled };
   }
 
   /** Verifies the hashstring header, then settles. 401 BAD_SIGNATURE, 404 UNKNOWN_CHARGE; { received: true } for every known charge, whatever the outcome. */

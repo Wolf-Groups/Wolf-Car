@@ -527,6 +527,47 @@ describe('PaymentsService', () => {
     });
   });
 
+  describe('settleBeforeExpiry', () => {
+    it('reads every attempt Tap still has open back from Tap, newest first, and settles each', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_2' }, { chargeId: 'chg_1' }] as never);
+      gateway.getCharge.mockImplementation((id: string) => Promise.resolve(charge({ id, status: id === 'chg_1' ? 'CAPTURED' : 'INITIATED' })));
+      const settle = jest
+        .spyOn(service, 'settle')
+        .mockImplementation((c: TapCharge) => Promise.resolve({ outcome: c.id === 'chg_1' ? 'paid' : 'pending', orderId: 'o-1' }));
+
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({
+        reachable: true,
+        settled: [
+          { chargeId: 'chg_2', outcome: 'pending' },
+          { chargeId: 'chg_1', outcome: 'paid' },
+        ],
+      });
+      expect(prisma.payment.findMany.mock.calls[0][0]).toMatchObject({
+        where: { orderId: 'o-1', status: 'INITIATED', chargeId: { not: null } },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'chg_2' }), 'expiry');
+      expect(settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'chg_1' }), 'expiry');
+    });
+
+    it('asks Tap nothing when no attempt has an open charge', async () => {
+      prisma.payment.findMany.mockResolvedValue([]);
+      const settle = jest.spyOn(service, 'settle');
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: true, settled: [] });
+      expect(gateway.getCharge).not.toHaveBeenCalled();
+      expect(settle).not.toHaveBeenCalled();
+    });
+
+    it('is unreachable when Tap cannot be asked, and settles nothing after that', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_2' }, { chargeId: 'chg_1' }] as never);
+      gateway.getCharge.mockRejectedValue(new PaymentGatewayError('timeout', 'TAP_TIMEOUT'));
+      const settle = jest.spyOn(service, 'settle');
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: false, settled: [] });
+      expect(gateway.getCharge).toHaveBeenCalledTimes(1);
+      expect(settle).not.toHaveBeenCalled();
+    });
+  });
+
   describe('without a payment gateway', () => {
     const offline = new PaymentsService(prisma, config, trail, null, odooOrders, emails);
 
@@ -546,6 +587,11 @@ describe('PaymentsService', () => {
       await expect(offline.reconcile(signedIn, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentMethod: 'branch' });
       prisma.payment.findFirst.mockResolvedValue(paymentRow() as never);
       await failsWith(offline.reconcile(signedIn, 'o-1'), 503, 'CHECKOUT_UNAVAILABLE');
+    });
+
+    it('settleBeforeExpiry cannot ask anyone: the sweep cancels as it always did', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_1' }] as never);
+      await expect(offline.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: true, settled: [] });
     });
   });
 
