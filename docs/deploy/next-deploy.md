@@ -1,16 +1,66 @@
-# Next deploy: what is still missing (written 2026-11-04)
+# Next deploy: what is still missing (written 2026-11-04, updated 2026-11-05)
 
 > للمالك: هذا الملف فيه كل اللي باقي قبل وبعد رفع هالتحديث على السيرفر. Claude على أي جهاز يقرأه تلقائيًا
 > (مربوط في `CLAUDE.md`). اشطب السطر لما يخلص، واحذف الملف لما يخلص كل شي.
 
 **For Claude:** read this before any deploy or server work and help the owner through the open items, in order.
 Never write a key or password into this file, the repo, or the chat; they go only into the server's env files.
-Ask the owner for each value and have them paste it on the server.
+Ask the owner for each value and have them paste it on the server. The Arabic list right below is the owner's
+review plan; each line names the English section that has the details and commands.
+
+## قبل اللايف: نراجع كل حاجة بالترتيب
+
+على جهاز الرفع اعمل `git pull` على `main`، وقول لـ Claude: «نراجع next-deploy.md خطوة بخطوة». كل بند تفاصيله
+وأوامره تحت بالإنجليزي (رقم القسم بين قوسين). ما تكتبش أي مفتاح أو باسورد في الشات: بيتحط على السيرفر بس.
+
+**الوضع:** الكود كله في `main` ومتجرّب (الاختبارات، 59 هجمة أمان، بناء Docker زي السيرفر). الموقع الحقيقي لسه على
+النسخة القديمة لحد ما `production` يتحدّث.
+
+### ١. الإيميلات وتسجيل الدخول في «حسابي»: لازم قبل الرفع (القسمين 1 و 2)
+- [ ] Brevo: مفتاح API جديد، وامسح القديم اللي اتبعت في الشات، وامسح مفتاح SMTP اللي اتعمل يوم 2026-11-04
+      (سيب «WolfCarOs (Adel)» لأن WolfOS بيستخدمه).
+- [ ] Brevo: ضيف IP السيرفر `167.172.106.106` في Authorized IPs، وإلا Brevo يرفض يبعت.
+- [ ] على السيرفر في `api.prod.env`: `EMAIL_PROVIDER` و `BREVO_API_KEY` و `EMAIL_FROM` و `EMAIL_FROM_NAME`،
+      و `SHOP_NOTIFY_EMAIL` (إيميلات الكول سنتر والمدير اللي يجيلهم تنبيه مع كل طلب).
+- [ ] على السيرفر: اتأكد إن `WEB_PUBLIC_URL` و `API_PUBLIC_URL` موجودين وقيمتهم `https://wolfcar.qa`
+      (من غيرهم الإيميلات بتطلع من غير لينك الطلب، والدفع بالبطاقة ما يشتغلش).
+
+### ٢. الرفع (القسم 3)
+- [ ] اعرف السيرفر بيسحب من أنهي GitHub: `Wolf-Groups` ولا `OmarElbasel` (الاتنين فيهم نفس `main` دلوقتي).
+- [ ] نسخة احتياطية من قاعدة البيانات قبل الرفع: التحديث بيغيّر جدول العملاء ومينفعش يترجع.
+- [ ] دمج `main` في `production`، والسيرفر بيتحدّث لوحده.
+
+### ٣. بعد الرفع: نجرّب على الموقع الحقيقي (القسم 4)
+- [ ] تدخل «حسابي» بإيميلك والكود يوصلك.
+- [ ] تعمل طلب «ادفع في الفرع»: صفحة الشكر، إيميل العميل، وتنبيه الكول سنتر.
+- [ ] الكول سنتر يأكد الطلب، وكاشير بن عمران يعلّمه «اتسلّم»، وبعدين نلغي طلبات التجربة.
+- [ ] زرار «تطبيقنا» وسكشن WolfOS على الموبايل بيفتحوا wolfcaros.com، والضغطة بتظهر في إحصائيات الزوار.
+- [ ] شاشة المعرض على الموبايل والشاشة الكبيرة، والحماية في الهيدرز (HSTS).
+
+### ٤. الدفع بالبطاقة (Tap): مقفول لحد المفاتيح الحقيقية (القسم 5)
+- [ ] مفاتيح Live من Tap: `pk_live` في `deploy/prod.env` (بعدها رفع جديد، لأنه بيتحط وقت البناء)،
+      و `sk_live` في `api.prod.env`.
+- [ ] سؤال لرامي من Tap: بطاقات التجربة اللي البنك بيطلب فيها كود تأكيد (3-D Secure) اترفضت بـ `701`،
+      هل البطاقات الحقيقية هتترفض كده؟
+- [ ] صفحة سياسة الاسترجاع (`/ar/refund-policy`) لسه مسودة: لازم توافق على الشروط.
+- [ ] إشعار Tap (webhook): نتأكد منه مع أول دفعة حقيقية، أو تفتح رابط مؤقت ونجربه.
+- [ ] Odoo: عشان طلبات البطاقة المدفوعة تنزل في Odoo لوحدها: `ODOO_WRITE_LOGIN` و `ODOO_WRITE_API_KEY`
+      و `ODOO_WEB_WAREHOUSE_ID` و `ODOO_FALLBACK_PRODUCT_ID` (طلبات «ادفع في الفرع» ما بتروحش Odoo أصلاً).
+
+### ٥. أمان السيرفر (القسم 5)
+- [ ] بورت SSH (22) لسه مفتوح للكل: شغّل `deploy/harden-ssh.sh` زي ما هو مكتوب في الـ README.
+
+### ٦. على Claude (مش بيوقف اللايف)
+- [ ] تحديث صور اختبارات الصفحة الرئيسية في Playwright (الـ 13 اختبار القديم).
+- [ ] مكتبة `deepmerge` في أداة الاختبارات `jest`، أول ما ينزل لها إصلاح.
+
+**الخلاصة:** الإيميلات والحساب والطلبات بالدفع في الفرع بيشتغلوا بعد ١ و ٢. الدفع بالبطاقة مستني مفاتيح Tap ورد رامي.
 
 ## What this deploy brings
 
-Branch `feat/email-guest-checkout` (spec: `docs/superpowers/specs/2026-11-04-email-guest-checkout-design.md`,
-plan: `docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README section 11):
+Branch `feat/email-guest-checkout`, merged into `main` on 2026-11-05 (spec:
+`docs/superpowers/specs/2026-11-04-email-guest-checkout-design.md`, plan:
+`docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README section 11):
 
 - No SMS. Sign-in codes, order emails and staff alerts go by email through **Brevo**.
 - Guests buy without an account (name, Qatari mobile for calls only, email); **pay by card** (Tap) or **pay at the branch**.
@@ -71,8 +121,10 @@ Safe to add before the new code is deployed (the running version ignores them). 
 
 - [ ] Check which GitHub repo the server pulls: `git -C /opt/wolfcar/app remote -v`. `deploy/server-setup.sh` clones
       `OmarElbasel/Wolf-Car`, this laptop's `origin` is `Wolf-Groups/Wolf-Car`: the branch must reach the one the server uses.
-- [ ] Review and merge `feat/email-guest-checkout` into `main`, then `main` into `production`. Pushing `production`
-      runs `.github/workflows/deploy.yml` → `scripts/deploy.sh` on the server.
+- [x] `feat/email-guest-checkout` merged into `main` on 2026-11-05 and pushed to both `origin` (Wolf-Groups) and
+      `fork` (OmarElbasel). Pushing `main` deploys nothing.
+- [ ] Merge `main` into `production`. Pushing `production` runs `.github/workflows/deploy.yml` → `scripts/deploy.sh`
+      on the server.
 - [ ] Before that push, take a database backup on the server: `/opt/wolfcar/app/scripts/backup.sh` (the migration cannot be undone).
 
 ## 4. After the deploy: checks (on the live site)
@@ -125,7 +177,9 @@ Safe to add before the new code is deployed (the running version ignores them). 
 - [ ] **SSH hardening**: port 22 is still public; run `deploy/harden-ssh.sh` as in README "Server access (SSH)".
 - [ ] **Refund policy page** (`/ar/refund-policy`) is a draft: the owner confirms the terms.
 - [ ] **Odoo** writing for paid card orders: `ODOO_WRITE_LOGIN`, `ODOO_WRITE_API_KEY`, `ODOO_WEB_WAREHOUSE_ID`, `ODOO_FALLBACK_PRODUCT_ID`.
-- [ ] Refresh the Playwright landing screenshots (the header now shows "My account").
+- [ ] Refresh the stale Playwright tests (13, unrelated to payments): the landing screenshots (the header now shows
+      "My account" and "Our app", and the WolfOS section) and the landing link count, protection packages ×2, the
+      catalog field list, and full-flow (the showroom login is now branch + PIN).
 - Small follow-ups left on purpose: order emails are sent inside the request (a slow Brevo slows that response);
   `text-align:end` in the email tables (old Outlook ignores it); no clean-up of guest customer rows; pay/cancel by
   order key logs no actor name.
