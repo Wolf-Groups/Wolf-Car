@@ -499,6 +499,8 @@ export interface AnalyticsTotals {
   visitorsAdded: number;
   visitorsOrdered: number;
   visitorsContacted: number;
+  /** presses on a link to WolfOS, our app */
+  wolfos: number;
 }
 
 /** Visitor statistics of the public website between two Qatar days. */

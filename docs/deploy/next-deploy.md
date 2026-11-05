@@ -19,6 +19,10 @@ plan: `docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README sectio
 - The **call center** (role Reservations) gets the new permission `order.web.handle`: it reads every order and
   confirms, cancels and hands over website orders. Granted by itself on the first start of the new API.
 - Showroom kiosk grid: 2 cards per row on phones, ~6 per row on the big screen.
+- Landing page: **WolfOS** (our app for the BYD Leopard's screens, wolfcaros.com). A lit "تطبيقنا" button in the
+  header (on phones too, and first in the menu) and a dark section under the hero; both open wolfcaros.com in a new
+  tab. The header's page links now show from 1280px wide (below that they are in the menu). Dashboard → visitor
+  statistics gets a "WolfOS presses" tile.
 - Card orders: before the expiry sweep cancels an unpaid card order it asks Tap about the payment. A customer who
   paid and closed the page before coming back (and whose webhook never came) gets a paid order and the receipt,
   not a cancelled one. Checked against Tap's sandbox on 2026-11-04.
@@ -76,7 +80,8 @@ Safe to add before the new code is deployed (the running version ignores them). 
        alert at `SHOP_NOTIFY_EMAIL`.
 3. [ ] Sign in as a call center user → Orders → *Website orders* shows it → Confirm. Then as the Bin Omran cashier →
        Mark collected. Then cancel your test orders.
-4. [ ] Showroom page on a phone (2 per row) and on the big screen.
+4. [ ] Showroom page on a phone (2 per row) and on the big screen. Landing page on a phone: "تطبيقنا" in the
+       header and the WolfOS section open wolfcaros.com; the press shows in Dashboard → visitor statistics.
 5. [ ] Headers: `curl -sI https://wolfcar.qa/ar` shows `strict-transport-security` and no `x-powered-by`.
 6. [ ] Logs if anything is off: `cd /opt/wolfcar/app && docker compose -f compose.prod.yml logs api --since 15m | grep -iE "email|brevo|sign-in|error"`.
 

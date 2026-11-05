@@ -14,6 +14,7 @@ import { Faq } from "@/components/Faq";
 import { FinalCta } from "@/components/FinalCta";
 import { Footer } from "@/components/Footer";
 import { StickyBar } from "@/components/StickyBar";
+import { WolfOs } from "@/components/WolfOs";
 import { hasLocale } from "next-intl";
 import { routing } from "@/i18n/routing";
 
@@ -32,6 +33,7 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
       <main id="main">
         <Hero />
         <BrandStrip />
+        <WolfOs />
         <Services />
         <Catalog />
         <Steps />

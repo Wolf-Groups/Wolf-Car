@@ -26,7 +26,24 @@
     "menu": "Menu",
     "closeMenu": "Close menu",
     "book": "Book now",
-    "call": "Call us"
+    "call": "Call us",
+    "app": "Our app",
+    "appNew": "New",
+    "appAria": "Our app, WolfOS (opens in a new tab)"
+  },
+  "WolfOs": {
+    "chip": "Our app · New from Wolf Car",
+    "tagline": "The launcher your <hl>BYD Leopard</hl> deserves",
+    "body": "One smart launcher for every screen in the car: live vehicle data, apps on the passenger screen and the driver's cluster, wallpapers, themes and screen mirroring.",
+    "imageAlt": "The WolfOS dashboard on a BYD Leopard screen",
+    "statsAria": "WolfOS in numbers",
+    "screens": "screens",
+    "apps": "apps",
+    "themes": "themes",
+    "discover": "Discover WolfOS",
+    "download": "Free download",
+    "newTab": "(opens in a new tab)",
+    "models": "Leopard 3 · 5 · 7 · 8"
   },
   "ContactSheet": {
     "heading": "Choose a branch",

@@ -109,12 +109,13 @@ function Report({ data, days }: { data: AnalyticsSummary; days: number }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Tile label={t("tiles.visitors")} value={now.visitors} before={before.visitors} days={days} hint={t("visitorsHint")} />
         <Tile label={t("tiles.pageviews")} value={now.pageviews} before={before.pageviews} days={days} />
         <Tile label={t("tiles.contacts")} value={contacts(now)} before={contacts(before)} days={days} />
         <Tile label={t("tiles.orders")} value={now.whatsappOrder} before={before.whatsappOrder} days={days} />
         <Tile label={t("tiles.addToCart")} value={now.addToCart} before={before.addToCart} days={days} />
+        <Tile label={t("tiles.wolfos")} value={now.wolfos} before={before.wolfos} days={days} />
       </div>
 
       {data.daily.length > 1 && <DailyChart daily={data.daily} />}

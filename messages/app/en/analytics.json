@@ -17,7 +17,8 @@
     "pageviews": "Page views",
     "contacts": "WhatsApp and call presses",
     "orders": "Orders sent on WhatsApp",
-    "addToCart": "Added to basket"
+    "addToCart": "Added to basket",
+    "wolfos": "WolfOS presses"
   },
   "visitorsHint": "People per day, added up",
   "change": {

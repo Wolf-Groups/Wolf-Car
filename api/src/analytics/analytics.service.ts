@@ -31,6 +31,8 @@ export interface AnalyticsTotals {
   visitorsOrdered: number;
   /** visitors who pressed any WhatsApp or call button */
   visitorsContacted: number;
+  /** presses on a link to WolfOS, our app */
+  wolfos: number;
 }
 
 export interface AnalyticsSummary {
@@ -191,7 +193,8 @@ export class AnalyticsService implements OnModuleInit, OnModuleDestroy {
              count(*) FILTER (WHERE type = 'add_to_cart') AS "addToCart",
              count(DISTINCT (day, visitor)) FILTER (WHERE type = 'add_to_cart') AS "visitorsAdded",
              count(DISTINCT (day, visitor)) FILTER (WHERE type = 'whatsapp_order') AS "visitorsOrdered",
-             count(DISTINCT (day, visitor)) FILTER (WHERE type LIKE 'whatsapp%' OR type = 'call') AS "visitorsContacted"
+             count(DISTINCT (day, visitor)) FILTER (WHERE type LIKE 'whatsapp%' OR type = 'call') AS "visitorsContacted",
+             count(*) FILTER (WHERE type = 'wolfos') AS "wolfos"
       FROM site_events WHERE day BETWEEN ${from}::date AND ${to}::date`;
     return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, num(value)])) as unknown as AnalyticsTotals;
   }

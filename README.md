@@ -4,7 +4,7 @@ This repository contains:
 
 | Part | Where | What |
 |---|---|---|
-| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English). Unchanged except for a **Product catalog** footer link. Staff sign in at `/login` (not linked from the site). |
+| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English), with a **Product catalog** footer link and **WolfOS**, our app for the BYD Leopard's screens: an "Our app" button in the header and a section under the hero, both opening wolfcaros.com in a new tab (presses counted in the visitor statistics). Staff sign in at `/login` (not linked from the site). |
 | **Public catalog** | `app/[locale]/products` | Products with image, name, description, category and price. Barcodes never leave the API here. Products without a price cannot be bought online; they are ordered on WhatsApp. |
 | **Online checkout** | `app/[locale]/checkout`, `features/shop/`, `api/src/shop/`, `api/src/email/` | A visitor fills a basket and orders without an account (name, mobile, email), paying by card through Tap or at the branch when collecting the parts at Bin Omran. Order emails and "My account" sign-in codes go by email through Brevo. Paid card orders are queued for Odoo. See section 11. |
 | **Staff dashboards** | `app/[locale]/(app)/(staff)` | One login for everyone; the account's role decides the landing page. Products, pricing, orders, users, branches, permissions, activity log, account security. |
