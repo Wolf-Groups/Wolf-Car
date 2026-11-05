@@ -1,38 +1,56 @@
 import type { CustomerProfile, WebOrder } from "@/lib/api/types";
-import { OTP_RESEND_SECONDS } from "@/shared/shop";
+import { localQatarNumber } from "@/shared/shop";
 
 /**
  * The checkout's steps as a pure reducer, so the order of screens is tested
- * without the DOM: phone → code → details → pay.
+ * without the DOM: details → pay. Nobody has to sign in; a session only fills
+ * the details in. An order paid at the branch has no pay step: it goes
+ * straight to its thank-you page.
  */
-export type Step = "phone" | "code" | "details" | "pay";
+export type Step = "details" | "pay";
+
+/** What fills the details form: the session's profile, or what this order was made with. */
+export interface ContactDetails {
+  name: string;
+  /** as shown in the field: "55123456" */
+  phone: string;
+  email: string;
+}
 
 export interface CheckoutState {
   step: Step;
-  /** E.164 once a code was sent */
-  phone: string;
+  /** the signed-in customer, if any */
   customer: CustomerProfile | null;
-  /** the unpaid order created at the details step */
+  contact: ContactDetails;
+  /** the unpaid card order created at the details step */
   order: WebOrder | null;
+  /** the key that opens `order` without a session */
+  key: string | null;
   busy: boolean;
   /** an API error code (or a message key) shown above the current step */
   error: string | null;
-  /** epoch ms when "Resend" may be pressed again */
-  resendAt: number | null;
 }
 
+const NO_CONTACT: ContactDetails = { name: "", phone: "", email: "" };
+
 export const initialState: CheckoutState = {
-  step: "phone",
-  phone: "",
+  step: "details",
   customer: null,
+  contact: NO_CONTACT,
   order: null,
+  key: null,
   busy: false,
   error: null,
-  resendAt: null,
 };
 
+const contactOf = (c: { name: string | null; phone: string | null; email: string | null }): ContactDetails => ({
+  name: c.name ?? "",
+  phone: c.phone ? localQatarNumber(c.phone) : "",
+  email: c.email ?? "",
+});
+
 /**
- * An order the checkout may take (back) to the pay step: still open and unpaid,
+ * An order the checkout may take (back) to the pay step: a card order still open and unpaid,
  * not past its expiry, and no capture on it (money already taken is for the branch to sort out).
  */
 export function resumable(order: WebOrder): boolean {
@@ -51,11 +69,8 @@ export function paidOrHeld(order: WebOrder): boolean {
 
 export type CheckoutEvent =
   | { type: "SESSION_FOUND"; customer: CustomerProfile }
-  | { type: "NO_SESSION" }
-  | { type: "OTP_SENT"; phone: string; now: number }
-  | { type: "VERIFIED"; customer: CustomerProfile }
-  | { type: "CHANGE_PHONE" }
-  | { type: "ORDER_CREATED"; order: WebOrder }
+  | { type: "SIGNED_OUT" }
+  | { type: "ORDER_CREATED"; order: WebOrder; key: string | null }
   | { type: "BACK_TO_DETAILS" }
   | { type: "BUSY"; busy: boolean }
   | { type: "ERROR"; code: string | null };
@@ -65,28 +80,14 @@ export function reduce(state: CheckoutState, event: CheckoutEvent): CheckoutStat
   const next = { ...state, error: null };
   switch (event.type) {
     case "SESSION_FOUND":
-    case "VERIFIED":
-      return { ...next, step: "details", customer: event.customer };
-    case "NO_SESSION":
-      return { ...next, step: "phone" };
-    case "OTP_SENT":
-      return { ...next, step: "code", phone: event.phone, resendAt: event.now + OTP_RESEND_SECONDS * 1000 };
-    case "CHANGE_PHONE":
-      return { ...next, step: "phone", customer: null };
+      return { ...next, customer: event.customer, contact: contactOf(event.customer) };
+    case "SIGNED_OUT":
+      return { ...next, customer: null, contact: NO_CONTACT };
     case "ORDER_CREATED":
-      // the order's name and email fill the details step again if the customer goes back to it
-      return {
-        ...next,
-        step: "pay",
-        order: event.order,
-        customer: state.customer && {
-          ...state.customer,
-          name: event.order.customer.name ?? state.customer.name,
-          email: event.order.customer.email ?? state.customer.email,
-        },
-      };
+      // the order's details fill the details step again if the customer goes back to it
+      return { ...next, step: "pay", order: event.order, key: event.key, contact: contactOf(event.order.customer) };
     case "BACK_TO_DETAILS":
-      return { ...next, step: "details", order: null };
+      return { ...next, step: "details", order: null, key: null };
     case "BUSY":
       return { ...next, busy: event.busy };
   }

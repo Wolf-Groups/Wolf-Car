@@ -5,20 +5,20 @@ import { server } from "@/tests/msw";
 import { renderOnSite } from "@/tests/render-site";
 import { apiError, customer } from "@/tests/shop-fixtures";
 import { OTP_RESEND_SECONDS } from "@/shared/shop";
-import { OtpStep, type OtpStepProps } from "./otp-step";
+import { CodeStep, type CodeStepProps } from "./code-step";
 
-const PHONE = "+97455123456";
+const EMAIL = "sara@example.com";
 const NOW = new Date("2031-03-10T09:00:00.000Z");
 
-function props(over: Partial<OtpStepProps> = {}): OtpStepProps {
-  return { phone: PHONE, resendAt: null, onVerified: vi.fn(), onChangePhone: vi.fn(), onResent: vi.fn(), ...over };
+function props(over: Partial<CodeStepProps> = {}): CodeStepProps {
+  return { email: EMAIL, resendAt: null, onVerified: vi.fn(), onChangeEmail: vi.fn(), onResent: vi.fn(), ...over };
 }
 
 function listenForVerify(answer: (code: string) => Response) {
   const tried: unknown[] = [];
   server.use(
     http.post("/api/shop/otp/verify", async ({ request }) => {
-      const body = (await request.json()) as { phone: string; code: string };
+      const body = (await request.json()) as { email: string; code: string };
       tried.push(body);
       return answer(body.code);
     }),
@@ -30,8 +30,8 @@ afterEach(() => vi.useRealTimers());
 
 describe("checkout: code step", () => {
   it("says where the code went", () => {
-    renderOnSite(<OtpStep {...props()} />);
-    expect(screen.getByText(/We sent a 6-digit code to/)).toHaveTextContent(/55\s?12\s?34\s?56|5512\s?3456/);
+    renderOnSite(<CodeStep {...props()} />);
+    expect(screen.getByText(/We emailed a 6-digit code to/)).toHaveTextContent("sara@example.com");
     expect(screen.getByLabelText("Verification code")).toBeInTheDocument();
   });
 
@@ -39,14 +39,14 @@ describe("checkout: code step", () => {
     const me = customer();
     const tried = listenForVerify(() => HttpResponse.json({ customer: me, expiresAt: "2031-04-09T09:00:00.000Z" }));
     const p = props();
-    const { user } = renderOnSite(<OtpStep {...p} />);
+    const { user } = renderOnSite(<CodeStep {...p} />);
 
     await user.type(screen.getByLabelText("Verification code"), "48291");
     expect(tried).toEqual([]);
     await user.type(screen.getByLabelText("Verification code"), "5");
 
     await waitFor(() => expect(p.onVerified).toHaveBeenCalledWith(me));
-    expect(tried).toEqual([{ phone: PHONE, code: "482915" }]);
+    expect(tried).toEqual([{ email: EMAIL, code: "482915" }]);
   });
 
   it("says a wrong code is wrong and lets the customer type another", async () => {
@@ -54,10 +54,10 @@ describe("checkout: code step", () => {
       code === "482915" ? HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" }) : apiError(401, "OTP_INVALID"),
     );
     const p = props();
-    const { user } = renderOnSite(<OtpStep {...p} />);
+    const { user } = renderOnSite(<CodeStep {...p} />);
 
     await user.type(screen.getByLabelText("Verification code"), "000000");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the message and try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the email and try again.");
     expect(p.onVerified).not.toHaveBeenCalled();
 
     await user.clear(screen.getByLabelText("Verification code"));
@@ -72,7 +72,7 @@ describe("checkout: code step", () => {
     const tried: unknown[] = [];
     server.use(
       http.post("/api/shop/otp/verify", async ({ request }) => {
-        const body = (await request.json()) as { phone: string; code: string };
+        const body = (await request.json()) as { email: string; code: string };
         tried.push(body);
         if (body.code === "482915") return HttpResponse.json({ customer: customer(), expiresAt: "2031-04-09T09:00:00.000Z" });
         await gate;
@@ -82,7 +82,7 @@ describe("checkout: code step", () => {
     const p = props();
     const { user } = renderOnSite(
       <>
-        <OtpStep {...p} />
+        <CodeStep {...p} />
         <button type="button">elsewhere</button>
       </>,
     );
@@ -92,7 +92,7 @@ describe("checkout: code step", () => {
     // a browser takes focus off the input it disables while the code is checked
     act(() => screen.getByRole("button", { name: "elsewhere" }).focus());
     release();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the message and try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong code. Check the email and try again.");
     await waitFor(() => expect(input).toHaveFocus());
     expect(input).toHaveValue("");
 
@@ -100,14 +100,14 @@ describe("checkout: code step", () => {
     await user.keyboard("482915");
     await waitFor(() => expect(p.onVerified).toHaveBeenCalledTimes(1));
     expect(tried).toEqual([
-      { phone: PHONE, code: "000000" },
-      { phone: PHONE, code: "482915" },
+      { email: EMAIL, code: "000000" },
+      { email: EMAIL, code: "482915" },
     ]);
   });
 
   it("explains a code that was guessed too often", async () => {
     listenForVerify(() => apiError(429, "OTP_TOO_MANY", { retryAfterSeconds: 600 }));
-    const { user } = renderOnSite(<OtpStep {...props()} />);
+    const { user } = renderOnSite(<CodeStep {...props()} />);
     await user.type(screen.getByLabelText("Verification code"), "123456");
     expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts. Please wait a while and try again.");
   });
@@ -123,7 +123,7 @@ describe("checkout: code step", () => {
       }),
     );
     const p = props({ resendAt: NOW.getTime() + OTP_RESEND_SECONDS * 1000 });
-    const { user } = renderOnSite(<OtpStep {...p} />);
+    const { user } = renderOnSite(<CodeStep {...p} />);
 
     // the label may switch ("Resend in 42s" → "Resend code") or sit next to a disabled "Resend code"
     const resend = () => screen.getByRole("button", { name: /^Resend/ });
@@ -141,30 +141,29 @@ describe("checkout: code step", () => {
 
     await user.click(resend());
     await waitFor(() => expect(p.onResent).toHaveBeenCalledTimes(1));
-    expect(resent).toEqual([{ phone: PHONE }]);
+    expect(resent).toEqual([{ email: EMAIL, locale: "en" }]);
     const next = vi.mocked(p.onResent).mock.calls[0][0];
     expect(next).toBeGreaterThanOrEqual(Date.now() + (OTP_RESEND_SECONDS - 1) * 1000);
     expect(next).toBeLessThanOrEqual(Date.now() + OTP_RESEND_SECONDS * 1000);
   });
 
   it("offers Resend at once when there is nothing to wait for", () => {
-    renderOnSite(<OtpStep {...props({ resendAt: null })} />);
+    renderOnSite(<CodeStep {...props({ resendAt: null })} />);
     expect(screen.getByRole("button", { name: "Resend code" })).toBeEnabled();
   });
 
-  it("goes back to the phone number on Change number", async () => {
+  it("goes back to the email on Change email", async () => {
     const p = props();
-    const { user } = renderOnSite(<OtpStep {...p} />);
-    // a link-styled button or a link: either way it reads "Change number"
-    await user.click(screen.getByText("Change number"));
-    expect(p.onChangePhone).toHaveBeenCalledTimes(1);
+    const { user } = renderOnSite(<CodeStep {...p} />);
+    await user.click(screen.getByText("Change email"));
+    expect(p.onChangeEmail).toHaveBeenCalledTimes(1);
   });
 
   it("shows the development code only when it was given one", () => {
-    const { unmount } = renderOnSite(<OtpStep {...props({ devCode: "482915" })} />);
+    const { unmount } = renderOnSite(<CodeStep {...props({ devCode: "482915" })} />);
     expect(screen.getByText("Development code: 482915")).toBeInTheDocument();
     unmount();
-    renderOnSite(<OtpStep {...props()} />);
+    renderOnSite(<CodeStep {...props()} />);
     expect(screen.queryByText(/Development code/)).not.toBeInTheDocument();
   });
 });

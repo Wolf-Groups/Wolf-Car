@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { BRANCH_CONTACTS } from "@/lib/branches";
+import { WOLFOS_ORIGIN } from "@/lib/content";
 import { track } from "@/lib/track";
 import type { SiteEventType } from "@/shared/analytics";
 
@@ -15,8 +16,8 @@ function branchOf(href: string): string | undefined {
 }
 
 /**
- * Counts page views and presses on WhatsApp and phone links across the public
- * website. Buttons that open WhatsApp from code (the branch picker, the
+ * Counts page views and presses on WhatsApp, phone and WolfOS links across the
+ * public website. Buttons that open WhatsApp from code (the branch picker, the
  * booking form) and the basket report themselves through track().
  */
 export function SiteAnalytics() {
@@ -35,7 +36,7 @@ export function SiteAnalytics() {
       else if (/^https:\/\/(wa\.me|api\.whatsapp\.com)\//.test(href)) {
         // a link can name its own kind, e.g. the basket's "order on WhatsApp"
         track((link.dataset.track as SiteEventType | undefined) ?? "whatsapp_chat", { label: branchOf(href) });
-      }
+      } else if (href.startsWith(`${WOLFOS_ORIGIN}/`)) track("wolfos", { label: link.dataset.place });
     };
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);

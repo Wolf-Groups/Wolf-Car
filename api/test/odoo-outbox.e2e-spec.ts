@@ -3,7 +3,7 @@ import type { OdooWriter } from '../src/odoo/odoo-writer';
 import { createTestApp, type TestApp } from './utils/app';
 import { bearer, login, showroomLogin } from './utils/auth';
 import { PW, seedWorld, type World } from './utils/fixtures';
-import { CUSTOMER_PHONE, paidWebOrder, SHOP_ENV, signInCustomer } from './utils/shop';
+import { CUSTOMER_EMAIL, CUSTOMER_PHONE, paidWebOrder, SHOP_ENV, signInCustomer } from './utils/shop';
 
 const MINUTE = 60_000;
 const PARTNER_ID = 77;
@@ -54,7 +54,7 @@ describe('Odoo outbox: paid web orders become sale orders (e2e)', () => {
   });
   beforeEach(async () => {
     world = await seedWorld(t.prisma);
-    sara = await signInCustomer(t, CUSTOMER_PHONE);
+    sara = await signInCustomer(t, CUSTOMER_EMAIL);
     tok = {
       admin: (await login(t, 'admin', PW.admin)).token,
       finance: (await login(t, 'finance', PW.finance)).token,

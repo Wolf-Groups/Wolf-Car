@@ -10,6 +10,9 @@ import type { WebOrderRow } from '../checkout/web-order.view';
 import { ensureSystemWebUser } from '../checkout/system-web-user';
 import type { CustomerPrincipal } from '../customers/customers.service';
 import { type PaymentGateway, PaymentGatewayError } from './payment-gateway';
+import type { OrderAccess } from '../checkout/order-access';
+import { orderKey } from '../checkout/order-key';
+import type { OrderEmailsService } from '../emails/order-emails.service';
 import { PaymentsService } from './payments.service';
 import { chargeOutcome, FAILED_STATUSES, formatTapAmount, sameAmount, type TapCharge } from './tap-charge';
 import { verifyTapSignature } from './tap-signature';
@@ -24,7 +27,9 @@ jest.mock('./tap-charge', () => ({
 jest.mock('./tap-signature', () => ({ tapHashString: jest.fn(), signTapCharge: jest.fn(), verifyTapSignature: jest.fn() }));
 jest.mock('../checkout/system-web-user', () => ({ SYSTEM_WEB_USERNAME: 'system.web', ensureSystemWebUser: jest.fn() }));
 
-const customer: CustomerPrincipal = { id: 'c-1', phone: '+97455123456', name: 'Sara Al Thani', email: 'sara@example.qa', sessionVersion: 1 };
+const customer: CustomerPrincipal = { id: 'c-1', email: 'sara@example.qa', name: 'Sara Al Thani', phone: '+97455123456', sessionVersion: 1 };
+const signedIn: OrderAccess = { customer, key: null };
+const SECRET = 'x'.repeat(40);
 
 const webRow = (over: Partial<WebOrderRow> = {}): WebOrderRow => ({
   id: 'o-1',
@@ -84,10 +89,11 @@ describe('PaymentsService', () => {
   const trail = mock<AuditTrail>();
   const gateway = mock<PaymentGateway>();
   const odooOrders = mock<OdooOrdersService>();
+  const emails = mock<OrderEmailsService>();
   const config = {
-    get: (key: string) => ({ WEB_PUBLIC_URL: 'https://wolfcar.qa', API_PUBLIC_URL: 'https://wolfcar.qa', TAP_SECRET_KEY: 'sk_test_x', PAYMENTS_PROVIDER: 'tap' })[key],
+    get: (key: string) => ({ WEB_PUBLIC_URL: 'https://wolfcar.qa', API_PUBLIC_URL: 'https://wolfcar.qa', TAP_SECRET_KEY: 'sk_test_x', PAYMENTS_PROVIDER: 'tap', JWT_ACCESS_SECRET: SECRET })[key],
   } as unknown as ConfigService<Env, true>;
-  const service = new PaymentsService(prisma, config, trail, gateway, odooOrders);
+  const service = new PaymentsService(prisma, config, trail, gateway, odooOrders, emails);
 
   /** The order as every read path may see it: a plain fetch, a nested include on the payment, or the FOR UPDATE lock. */
   const setOrder = (row: WebOrderRow, payment: ReturnType<typeof paymentRow> | null = paymentRow()) => {
@@ -161,6 +167,10 @@ describe('PaymentsService', () => {
       expect(trail.addMetadata).toHaveBeenCalledWith(expect.objectContaining({ via: 'webhook', chargeId: 'chg_1', outcome: 'paid' }));
       expect(trail.addMetadata).not.toHaveBeenCalledWith(expect.objectContaining({ afterExpiry: true }));
       expect(trail.markFailure).not.toHaveBeenCalled();
+      // the receipt goes out once, after the transaction
+      expect(emails.paid).toHaveBeenCalledTimes(1);
+      expect(emails.paid).toHaveBeenCalledWith('o-1');
+      expect(emails.paid.mock.invocationCallOrder[0]).toBeGreaterThan(prisma.$transaction.mock.invocationCallOrder[0]);
 
       const sqlOf = (q: unknown): string =>
         Array.isArray(q)
@@ -195,6 +205,8 @@ describe('PaymentsService', () => {
         // a CAPTURED payment never changes again: at most the last charge object is stored
         expect(paymentStateWrites()).toEqual([]);
         expect(odooOrders.enqueue).not.toHaveBeenCalled();
+        // no second receipt
+        expect(emails.paid).not.toHaveBeenCalled();
         expect(trail.addMetadata).toHaveBeenCalledWith(expect.objectContaining({ via, outcome: 'already_paid' }));
         expect(trail.markFailure).not.toHaveBeenCalled();
       },
@@ -333,7 +345,7 @@ describe('PaymentsService', () => {
     });
 
     it('creates an INITIATED attempt, asks Tap for a charge and answers the 3-D Secure URL', async () => {
-      const result = await service.pay(customer, 'o-1', dto);
+      const result = await service.pay(signedIn, 'o-1', dto);
 
       const created = prisma.payment.create.mock.calls[0][0].data as { orderId: string; status: string; amount: unknown; currency: string };
       expect(created).toMatchObject({ orderId: 'o-1', status: 'INITIATED', currency: 'QAR' });
@@ -345,7 +357,7 @@ describe('PaymentsService', () => {
         currency: 'QAR',
         tokenId: 'tok_abc123',
         customer: { name: 'Sara Al Thani', email: 'sara@example.qa', phone: '+97455123456' },
-        redirectUrl: 'https://wolfcar.qa/ar/checkout/return?order=o-1',
+        redirectUrl: `https://wolfcar.qa/ar/checkout/return?order=o-1&key=${orderKey('o-1', SECRET)}`,
         postUrl: 'https://wolfcar.qa/api/shop/payments/tap/webhook',
         orderId: 'o-1',
         orderCode: 'BO-000001',
@@ -369,45 +381,45 @@ describe('PaymentsService', () => {
       const captured = charge({ status: 'CAPTURED' });
       gateway.createCharge.mockResolvedValue(captured);
       const settle = jest.spyOn(service, 'settle').mockResolvedValue({ outcome: 'paid', orderId: 'o-1' });
-      await service.pay(customer, 'o-1', dto);
+      await service.pay(signedIn, 'o-1', dto);
       expect(settle).toHaveBeenCalledTimes(1);
       expect(settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'chg_1', status: 'CAPTURED' }), 'create');
     });
 
     it('does not settle a charge that is still waiting for 3-D Secure', async () => {
       const settle = jest.spyOn(service, 'settle').mockResolvedValue({ outcome: 'pending', orderId: 'o-1' });
-      await service.pay(customer, 'o-1', dto);
+      await service.pay(signedIn, 'o-1', dto);
       expect(settle).not.toHaveBeenCalled();
     });
 
     it('builds the return URL for the English site when asked', async () => {
-      await service.pay(customer, 'o-1', { ...dto, locale: 'en' });
-      expect(gateway.createCharge.mock.calls[0][0]).toMatchObject({ redirectUrl: 'https://wolfcar.qa/en/checkout/return?order=o-1', locale: 'en' });
+      await service.pay(signedIn, 'o-1', { ...dto, locale: 'en' });
+      expect(gateway.createCharge.mock.calls[0][0]).toMatchObject({ redirectUrl: `https://wolfcar.qa/en/checkout/return?order=o-1&key=${orderKey('o-1', SECRET)}`, locale: 'en' });
     });
 
     it('is 409 ORDER_NOT_PAYABLE for an expired order, before any attempt is made', async () => {
       setOrder(webRow({ expiresAt: new Date(Date.now() - 1_000) }), null);
-      await failsWith(service.pay(customer, 'o-1', dto), 409, 'ORDER_NOT_PAYABLE');
+      await failsWith(service.pay(signedIn, 'o-1', dto), 409, 'ORDER_NOT_PAYABLE');
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(gateway.createCharge).not.toHaveBeenCalled();
     });
 
     it('is 409 ORDER_NOT_PAYABLE for a cancelled order', async () => {
       setOrder(webRow({ status: 'CANCELLED' }), null);
-      await failsWith(service.pay(customer, 'o-1', dto), 409, 'ORDER_NOT_PAYABLE');
+      await failsWith(service.pay(signedIn, 'o-1', dto), 409, 'ORDER_NOT_PAYABLE');
       expect(gateway.createCharge).not.toHaveBeenCalled();
     });
 
     it("is 404 for anyone else's order, before any attempt is made", async () => {
       prisma.order.findFirst.mockResolvedValue(null);
-      await expect(service.pay(customer, 'o-2', dto)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.pay(signedIn, 'o-2', dto)).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(gateway.createCharge).not.toHaveBeenCalled();
     });
 
     it('is 409 ALREADY_PAID when a captured attempt exists', async () => {
       setOrder(webRow({ payments: [{ status: 'CAPTURED', failureCode: null, chargeId: 'chg_1' }] }), paymentRow({ status: 'CAPTURED' }));
-      await failsWith(service.pay(customer, 'o-1', dto), 409, 'ALREADY_PAID');
+      await failsWith(service.pay(signedIn, 'o-1', dto), 409, 'ALREADY_PAID');
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(gateway.createCharge).not.toHaveBeenCalled();
     });
@@ -417,14 +429,14 @@ describe('PaymentsService', () => {
         webRow({ status: 'CONFIRMED', paymentStatus: 'PAID', paidAt: new Date(), payments: [{ status: 'CAPTURED', failureCode: null, chargeId: 'chg_1' }] }),
         paymentRow({ status: 'CAPTURED' }),
       );
-      await failsWith(service.pay(customer, 'o-1', dto), 409, 'ALREADY_PAID');
+      await failsWith(service.pay(signedIn, 'o-1', dto), 409, 'ALREADY_PAID');
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(gateway.createCharge).not.toHaveBeenCalled();
     });
 
     it('marks the attempt FAILED with the gateway code and answers 402 PAYMENT_FAILED when Tap refuses', async () => {
       gateway.createCharge.mockRejectedValue(new PaymentGatewayError('Unknown test token', 'INVALID_TOKEN', 400));
-      const err = await failsWith(service.pay(customer, 'o-1', dto), 402, 'PAYMENT_FAILED');
+      const err = await failsWith(service.pay(signedIn, 'o-1', dto), 402, 'PAYMENT_FAILED');
       expect(err.getResponse()).toMatchObject({ reason: 'INVALID_TOKEN' });
       expect(paymentWrites()).toContainEqual(expect.objectContaining({ status: 'FAILED', failureCode: 'INVALID_TOKEN' }));
       expect(prisma.order.update).not.toHaveBeenCalled();
@@ -469,9 +481,9 @@ describe('PaymentsService', () => {
 
     it("with the fake provider and no secret configured, checks the signature against 'fake-secret'", async () => {
       const fakeConfig = {
-        get: (key: string) => ({ WEB_PUBLIC_URL: 'https://wolfcar.qa', API_PUBLIC_URL: 'https://wolfcar.qa', PAYMENTS_PROVIDER: 'fake' })[key],
+        get: (key: string) => ({ WEB_PUBLIC_URL: 'https://wolfcar.qa', API_PUBLIC_URL: 'https://wolfcar.qa', PAYMENTS_PROVIDER: 'fake', JWT_ACCESS_SECRET: SECRET })[key],
       } as unknown as ConfigService<Env, true>;
-      const fakeService = new PaymentsService(prisma, fakeConfig, trail, gateway, odooOrders);
+      const fakeService = new PaymentsService(prisma, fakeConfig, trail, gateway, odooOrders, emails);
       jest.spyOn(fakeService, 'settle').mockResolvedValue({ outcome: 'paid', orderId: 'o-1' });
       const body = charge();
       await expect(fakeService.handleWebhook(body, 'good')).resolves.toEqual({ received: true });
@@ -492,7 +504,7 @@ describe('PaymentsService', () => {
       const fromTap = charge();
       gateway.getCharge.mockResolvedValue(fromTap);
       const settle = jest.spyOn(service, 'settle').mockResolvedValue({ outcome: 'paid', orderId: 'o-1' });
-      const view = await service.reconcile(customer, 'o-1');
+      const view = await service.reconcile(signedIn, 'o-1');
       expect(gateway.getCharge).toHaveBeenCalledWith('chg_1');
       expect(settle).toHaveBeenCalledWith(fromTap, 'reconcile');
       expect(view).toMatchObject({ id: 'o-1', code: 'BO-000001', total: '619.50' });
@@ -501,7 +513,7 @@ describe('PaymentsService', () => {
     it('answers the current view without asking Tap when no attempt has a charge yet', async () => {
       setOrder(webRow(), null);
       const settle = jest.spyOn(service, 'settle').mockResolvedValue({ outcome: 'pending', orderId: 'o-1' });
-      await expect(service.reconcile(customer, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentStatus: 'PENDING' });
+      await expect(service.reconcile(signedIn, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentStatus: 'PENDING' });
       expect(gateway.getCharge).not.toHaveBeenCalled();
       expect(settle).not.toHaveBeenCalled();
     });
@@ -510,23 +522,76 @@ describe('PaymentsService', () => {
       setOrder(webRow({ payments: [{ status: 'INITIATED', failureCode: null, chargeId: 'chg_1' }] }), paymentRow());
       gateway.getCharge.mockRejectedValue(new PaymentGatewayError('timeout', 'GATEWAY_ERROR'));
       const settle = jest.spyOn(service, 'settle').mockResolvedValue({ outcome: 'paid', orderId: 'o-1' });
-      await expect(service.reconcile(customer, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentStatus: 'PENDING' });
+      await expect(service.reconcile(signedIn, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentStatus: 'PENDING' });
+      expect(settle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('settleBeforeExpiry', () => {
+    it('reads every attempt Tap still has open back from Tap, newest first, and settles each', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_2' }, { chargeId: 'chg_1' }] as never);
+      gateway.getCharge.mockImplementation((id: string) => Promise.resolve(charge({ id, status: id === 'chg_1' ? 'CAPTURED' : 'INITIATED' })));
+      const settle = jest
+        .spyOn(service, 'settle')
+        .mockImplementation((c: TapCharge) => Promise.resolve({ outcome: c.id === 'chg_1' ? 'paid' : 'pending', orderId: 'o-1' }));
+
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({
+        reachable: true,
+        settled: [
+          { chargeId: 'chg_2', outcome: 'pending' },
+          { chargeId: 'chg_1', outcome: 'paid' },
+        ],
+      });
+      expect(prisma.payment.findMany.mock.calls[0][0]).toMatchObject({
+        where: { orderId: 'o-1', status: 'INITIATED', chargeId: { not: null } },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'chg_2' }), 'expiry');
+      expect(settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'chg_1' }), 'expiry');
+    });
+
+    it('asks Tap nothing when no attempt has an open charge', async () => {
+      prisma.payment.findMany.mockResolvedValue([]);
+      const settle = jest.spyOn(service, 'settle');
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: true, settled: [] });
+      expect(gateway.getCharge).not.toHaveBeenCalled();
+      expect(settle).not.toHaveBeenCalled();
+    });
+
+    it('is unreachable when Tap cannot be asked, and settles nothing after that', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_2' }, { chargeId: 'chg_1' }] as never);
+      gateway.getCharge.mockRejectedValue(new PaymentGatewayError('timeout', 'TAP_TIMEOUT'));
+      const settle = jest.spyOn(service, 'settle');
+      await expect(service.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: false, settled: [] });
+      expect(gateway.getCharge).toHaveBeenCalledTimes(1);
       expect(settle).not.toHaveBeenCalled();
     });
   });
 
   describe('without a payment gateway', () => {
-    const offline = new PaymentsService(prisma, config, trail, null, odooOrders);
+    const offline = new PaymentsService(prisma, config, trail, null, odooOrders, emails);
 
-    it('pay, reconcile and the webhook answer 503 CHECKOUT_UNAVAILABLE before anything else', async () => {
+    it('pay and the webhook answer 503 CHECKOUT_UNAVAILABLE before anything else', async () => {
       const settle = jest.spyOn(offline, 'settle').mockResolvedValue({ outcome: 'paid', orderId: 'o-1' });
-      await failsWith(offline.pay(customer, 'o-1', { tokenId: 'tok_abc123', locale: 'en' }), 503, 'CHECKOUT_UNAVAILABLE');
-      await failsWith(offline.reconcile(customer, 'o-1'), 503, 'CHECKOUT_UNAVAILABLE');
+      await failsWith(offline.pay(signedIn, 'o-1', { tokenId: 'tok_abc123', locale: 'en' }), 503, 'CHECKOUT_UNAVAILABLE');
       await failsWith(offline.handleWebhook(charge(), 'good'), 503, 'CHECKOUT_UNAVAILABLE');
       expect(prisma.order.findFirst).not.toHaveBeenCalled();
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(verifyTapSignature).not.toHaveBeenCalled();
       expect(settle).not.toHaveBeenCalled();
+    });
+
+    it('reconcile answers an order nothing was charged for (paid at the branch), and 503 for one with a charge', async () => {
+      setOrder(webRow({ paymentStatus: 'NONE', expiresAt: null }), null);
+      prisma.payment.findFirst.mockResolvedValue(null);
+      await expect(offline.reconcile(signedIn, 'o-1')).resolves.toMatchObject({ id: 'o-1', paymentMethod: 'branch' });
+      prisma.payment.findFirst.mockResolvedValue(paymentRow() as never);
+      await failsWith(offline.reconcile(signedIn, 'o-1'), 503, 'CHECKOUT_UNAVAILABLE');
+    });
+
+    it('settleBeforeExpiry cannot ask anyone: the sweep cancels as it always did', async () => {
+      prisma.payment.findMany.mockResolvedValue([{ chargeId: 'chg_1' }] as never);
+      await expect(offline.settleBeforeExpiry('o-1')).resolves.toEqual({ reachable: true, settled: [] });
     });
   });
 

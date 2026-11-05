@@ -9,8 +9,6 @@ import { Link } from "@/i18n/navigation";
 import type { CustomerCar } from "@/lib/api/types";
 
 export interface YourCarsProps {
-  /** cardCheckoutEnabled(): customers can only sign in once card checkout is live */
-  enabled: boolean;
   /** the ?category= on screen, marked as the current car */
   selected?: string;
 }
@@ -20,12 +18,12 @@ export interface YourCarsProps {
  * way to its parts, or a nudge to add one. Nothing for anyone else. The page
  * itself stays the same cached HTML for everybody; this part loads in the browser.
  */
-export function YourCars({ enabled, selected }: YourCarsProps) {
+export function YourCars({ selected }: YourCarsProps) {
   const t = useTranslations("Account");
   const [cars, setCars] = useState<CustomerCar[] | null>(null);
 
   useEffect(() => {
-    if (!enabled || !hasCustomerHint()) return;
+    if (!hasCustomerHint()) return;
     let live = true;
     // not signed in after all (expired cookie) or any failure: show nothing
     shop.myCars().then(
@@ -35,9 +33,9 @@ export function YourCars({ enabled, selected }: YourCarsProps) {
     return () => {
       live = false;
     };
-  }, [enabled]);
+  }, []);
 
-  if (!enabled || cars === null) return null;
+  if (cars === null) return null;
   if (cars.length === 0)
     return (
       <Link

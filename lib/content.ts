@@ -314,6 +314,24 @@ export const SOCIAL = {
 export const LOGO =
   "https://res.cloudinary.com/dzcq09k8h/image/upload/v1777807970/Logo-removebg-preview_mg3e4j.png";
 
+/** WolfOS, our launcher for the BYD Leopard's screens, has its own site. */
+export const WOLFOS_ORIGIN = "https://wolfcaros.com";
+export const WOLFOS = {
+  site: (locale: Locale) => `${WOLFOS_ORIGIN}/${locale}`,
+  /** the download page with the Leopard already chosen */
+  download: (locale: Locale) => `${WOLFOS_ORIGIN}/${locale}/download?brand=byd-leopard`,
+  /** as WolfOS's own site gives them */
+  stats: { screens: 3, apps: 61, themes: 6 },
+};
+
+/**
+ * Every link to WolfOS: a new tab, so the visitor keeps our site, and where it sat on the page
+ * for the visitor statistics (SiteAnalytics counts it as "wolfos").
+ */
+export function wolfOsLink(href: string, place: "header" | "menu" | "section" | "download") {
+  return { href, target: "_blank", rel: "noopener", "data-place": place } as const;
+}
+
 export function getServices(locale: Locale) {
   return SERVICES[locale];
 }

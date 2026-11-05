@@ -5,7 +5,7 @@ import { imageUrl } from '../../uploads/image-processing';
 import { CustomerCarsService } from './customer-cars.service';
 import type { CustomerPrincipal } from './customers.service';
 
-const customer: CustomerPrincipal = { id: 'c-1', phone: '+97455123456', name: null, email: null, sessionVersion: 1 };
+const customer: CustomerPrincipal = { id: 'c-1', email: 'sara@example.qa', name: null, phone: '+97455123456', sessionVersion: 1 };
 const L8 = '00000000-0000-4000-8000-000000000008';
 const L5 = '00000000-0000-4000-8000-000000000005';
 

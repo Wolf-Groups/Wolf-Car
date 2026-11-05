@@ -1,9 +1,15 @@
 import type { WebOrder } from "@/lib/api/types";
 
 /** Where a web order stands, in the customer's words (messages Account.state.*). */
-export type OrderState = "awaitingPayment" | "paid" | "collected" | "refunded" | "review" | "cancelled";
+export type OrderState = "awaitingPayment" | "awaitingConfirmation" | "payAtBranch" | "paid" | "collected" | "refunded" | "review" | "cancelled";
 
 export function orderState(order: WebOrder, now = Date.now()): OrderState {
+  // to pay at the branch: waiting for the branch's call, then confirmed until it is handed over
+  if (order.paymentMethod === "branch") {
+    if (order.status === "CANCELLED") return "cancelled";
+    if (order.collectedAt) return "collected";
+    return order.status === "CONFIRMED" ? "payAtBranch" : "awaitingConfirmation";
+  }
   if (order.paymentStatus === "REFUNDED") return "refunded";
   if (order.paymentStatus === "PAID") return order.collectedAt ? "collected" : "paid";
   // captured but held back (AMOUNT_MISMATCH, DUPLICATE_CAPTURE): the branch sorts it out

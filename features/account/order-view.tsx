@@ -9,8 +9,9 @@ import { useCustomer } from "@/features/shop/use-customer";
 import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api/client";
 import type { WebOrder } from "@/lib/api/types";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { localQatarNumber } from "@/shared/shop";
 import { Skeleton } from "./account";
 import { orderState } from "./order-state";
 import { SignIn } from "./sign-in";
@@ -73,14 +74,19 @@ function OrderCard({ order }: { order: WebOrder }) {
   const locale = useLocale();
   const state = orderState(order);
   const branch = locale === "ar" ? order.branch.nameAr : order.branch.name;
+  const phone = `\u2066+974 ${localQatarNumber(order.customer.phone).replace(/^(\d{4})/, "$1 ")}\u2069`;
   const note =
     state === "awaitingPayment"
       ? t("stateNote.awaitingPayment", { time: formatDateTime(order.expiresAt, locale) })
-      : state === "paid"
-        ? t("stateNote.paid", { branch })
-        : state === "collected"
-          ? t("stateNote.collected", { date: formatDate(order.collectedAt, locale) })
-          : t(`stateNote.${state}`);
+      : state === "awaitingConfirmation"
+        ? t("stateNote.awaitingConfirmation", { phone })
+        : state === "payAtBranch"
+          ? t("stateNote.payAtBranch", { total: formatMoney(order.total, locale), branch })
+          : state === "paid"
+            ? t("stateNote.paid", { branch })
+            : state === "collected"
+              ? t("stateNote.collected", { date: formatDate(order.collectedAt, locale) })
+              : t(`stateNote.${state}`);
 
   return (
     <section className="grid gap-5 rounded-[var(--radius-brand-lg)] border border-line bg-surface p-5 md:p-7">

@@ -44,7 +44,8 @@ enum OrderSource {
   WEB
 }
 
-/// Online payment of an order. Showroom orders stay NONE (paid at the till).
+/// Online payment of an order. Showroom orders stay NONE (paid at the till),
+/// and so do web orders the customer chose to pay at the branch.
 enum PaymentStatus {
   NONE
   PENDING
@@ -458,6 +459,8 @@ model Order {
   /// Snapshots of the website customer's contact details at order time.
   customerPhone  String?       @map("customer_phone") @db.VarChar(20)
   customerEmail  String?       @map("customer_email") @db.VarChar(254)
+  /// The website language the order was placed in ("ar" | "en"): its emails use it.
+  customerLocale String        @default("ar") @map("customer_locale") @db.VarChar(2)
   paymentStatus  PaymentStatus @default(NONE) @map("payment_status")
   /// When Tap captured the card.
   paidAt         DateTime?     @map("paid_at") @db.Timestamptz(3)
@@ -488,14 +491,17 @@ model Order {
   @@map("orders")
 }
 
-/// A website customer, separate from staff accounts. Identified by phone;
-/// signs in with a one-time code. Name and email are what was last typed at checkout.
+/// A website customer, separate from staff accounts. Identified by email
+/// (lower-case); signs in with a one-time code sent there. A guest order finds
+/// or creates the customer of its email. Name and phone are what was last typed
+/// at checkout. Customers from the phone sign-in may have no email: they cannot
+/// sign in until they order with one.
 model Customer {
   id             String    @id @default(uuid()) @db.Uuid
-  /// E.164, e.g. "+97455123456".
-  phone          String    @unique @db.VarChar(20)
+  email          String?   @unique @db.VarChar(254)
+  /// E.164, e.g. "+97455123456"; for the branch to call, never sent anything.
+  phone          String?   @db.VarChar(20)
   name           String?   @db.VarChar(80)
-  email          String?   @db.VarChar(254)
   /// Bumped by "sign out everywhere"; cookies carrying an older version stop working.
   sessionVersion Int       @default(1) @map("session_version")
   lastLoginAt    DateTime? @map("last_login_at") @db.Timestamptz(3)
@@ -530,14 +536,15 @@ model CustomerCar {
 /// expired, or guessed wrong OTP_MAX_ATTEMPTS times.
 model CustomerOtp {
   id         String    @id @default(uuid()) @db.Uuid
-  phone      String    @db.VarChar(20)
+  /// lower-case, as the customer signs in with it
+  email      String    @db.VarChar(254)
   codeHash   String    @map("code_hash") @db.VarChar(64)
   expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
   attempts   Int       @default(0)
   consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@index([phone, createdAt])
+  @@index([email, createdAt])
   @@map("customer_otps")
 }
 

@@ -47,8 +47,11 @@ export interface ShowroomCatalog {
 
 export const SHOWROOM_PRODUCTS_KEY = ["showroom", "products"] as const;
 const HEADER_H = "76px";
-/** Two cards across a small tablet, three across an upright kiosk, up to five on a wide wall screen. */
-const GRID = "grid grid-cols-1 gap-4 min-[560px]:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 min-[2000px]:grid-cols-5";
+/**
+ * Two cards across a phone; from a tablet up, as many ~200px cards as the width holds (six or seven beside
+ * the basket on the showroom's big screen), so a car model's parts are seen at a glance.
+ */
+const GRID = "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))] sm:gap-4 2xl:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]";
 /** Cards added each time the list nears its end; a car model can hold 150+ products. */
 const PAGE = 24;
 

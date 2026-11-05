@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Check, CheckCircle2, CircleAlert, CircleMinus, Clock, FileDown, Globe, Lock, PackageCheck, Pencil, RotateCw, TriangleAlert, Undo2 } from "lucide-react";
+import { Ban, Check, CheckCircle2, CircleAlert, CircleMinus, Clock, FileDown, Globe, Lock, PackageCheck, Pencil, Phone, RotateCw, TriangleAlert, Undo2 } from "lucide-react";
 import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
@@ -179,16 +179,21 @@ function OrderDetailBody({ id }: { id: string }) {
   const isAdmin = user?.role === "SUPER_ADMIN";
   const pending = o.status === "PENDING";
   const web = o.source === "WEB";
+  // ordered on the website to pay at the till: staff confirm it after calling, and the till rings it up
+  const payAtBranch = web && o.paymentStatus === "NONE";
   // gated by permission AND state; the Super Admin may override the "pending only" rule (the API allows it).
-  // A web order is never edited (its total is what the card was charged) nor confirmed by staff (the payment confirms it).
+  // A web order is never edited (its total is what the customer was told or charged), and a card order is never
+  // confirmed by staff (the payment confirms it).
   const canEdit = !web && can("order.update") && (pending || isAdmin);
-  const canConfirm = !web && can("order.confirm") && pending;
-  const canCancel = can("order.cancel") && (pending || (isAdmin && o.status === "CONFIRMED"));
-  // handing a paid web order over at the counter, once
-  const canCollect = web && can("order.confirm") && o.status === "CONFIRMED" && o.paymentStatus === "PAID" && !o.collectedAt;
+  // the call center (order.web.handle) confirms, cancels and hands over the website's orders, never a showroom's
+  const handlesThis = web && can("order.web.handle");
+  const canConfirm = (!web || payAtBranch) && (can("order.confirm") || handlesThis) && pending;
+  const canCancel = (can("order.cancel") || handlesThis) && (pending || (isAdmin && o.status === "CONFIRMED"));
+  // handing a web order over at the counter, once: paid by card, or confirmed to pay at the till
+  const canCollect = web && (can("order.confirm") || handlesThis) && o.status === "CONFIRMED" && (o.paymentStatus === "PAID" || payAtBranch) && !o.collectedAt;
   // a refunded order is never sold in Odoo (its row fails with ORDER_REFUNDED), and one already there needs nothing
   const canRetryOdoo = can("order.odoo.retry") && o.odoo !== null && o.odoo.status !== "DONE" && o.paymentStatus !== "REFUNDED";
-  const canReceipt = can("order.receipt.download");
+  const canReceipt = can("order.receipt.download") || can("order.web.handle");
   const locked = o.status === "CONFIRMED" && !canEdit && !canCancel;
   // the newest card attempt's failure: the codes staff must act on get a sentence, any other code is shown as Tap sent it
   const failureCode = o.payment?.failureCode ?? null;
@@ -272,6 +277,12 @@ function OrderDetailBody({ id }: { id: string }) {
           <p className="flex items-start gap-2 rounded-[var(--radius-brand)] bg-success-soft px-3 py-2.5 text-sm font-bold text-success">
             <CheckCircle2 className="mt-px size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
             {t("paidOnline")}
+          </p>
+        )}
+        {payAtBranch && o.status !== "CANCELLED" && !o.collectedAt && (
+          <p className="flex items-start gap-2 rounded-[var(--radius-brand)] bg-warning-soft px-3 py-2.5 text-sm font-semibold text-warning">
+            <Phone className="mt-px size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            {t("payAtBranchNote")}
           </p>
         )}
         {locked && (
@@ -417,11 +428,11 @@ function OrderDetailBody({ id }: { id: string }) {
                     {formatMoney(item.lineTotal, locale)}
                   </span>
                 </span>
-                {item.barcode && !web && (
+                {item.barcode && (!web || payAtBranch) && (
                   // scannable: the cashier reads this straight off the screen
                   // into the till system, so the bars matter more than the digits.
                   // A row of its own, so a phone shows every bar at full size.
-                  // Never on a web order: the card paid it, the till must not ring it up again.
+                  // Never on a card web order: the card paid it, the till must not ring it up again.
                   <Barcode value={item.barcode} className="basis-full [&>svg]:h-auto [&>svg]:max-w-full" />
                 )}
               </li>
@@ -517,7 +528,7 @@ function OrderDetailBody({ id }: { id: string }) {
         open={dialog === "collect"}
         onOpenChange={(open) => setDialog(open ? "collect" : null)}
         title={t("collectTitle", { code: isolate(o.code) })}
-        body={t("collectBody")}
+        body={payAtBranch ? t("collectBodyBranch", { total: formatMoney(o.total, locale) }) : t("collectBody")}
         confirmLabel={t("markCollected")}
         onConfirm={act("collect")}
       />

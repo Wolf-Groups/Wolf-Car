@@ -19,14 +19,15 @@ const totals = (overrides: Partial<AnalyticsTotals> = {}): AnalyticsTotals => ({
   visitorsAdded: 0,
   visitorsOrdered: 0,
   visitorsContacted: 0,
+  wolfos: 0,
   ...overrides,
 });
 
 const SUMMARY: AnalyticsSummary = {
   from: "2026-09-10",
   to: "2026-10-09",
-  totals: totals({ visitors: 200, visits: 240, pageviews: 900, whatsappOrder: 12, whatsappBooking: 5, whatsappChat: 20, calls: 3, addToCart: 60, visitorsAdded: 40, visitorsOrdered: 10 }),
-  previous: totals({ visitors: 100, pageviews: 900, whatsappOrder: 24 }),
+  totals: totals({ visitors: 200, visits: 240, pageviews: 900, whatsappOrder: 12, whatsappBooking: 5, whatsappChat: 20, calls: 3, addToCart: 60, visitorsAdded: 40, visitorsOrdered: 10, wolfos: 14 }),
+  previous: totals({ visitors: 100, pageviews: 900, whatsappOrder: 24, wolfos: 7 }),
   daily: [
     { day: "2026-10-08", visitors: 80, pageviews: 300, contacts: 10 },
     { day: "2026-10-09", visitors: 120, pageviews: 600, contacts: 30 },
@@ -85,6 +86,10 @@ describe("website visitors page", () => {
     // WhatsApp order + booking + other WhatsApp + calls
     expect(screen.getByText("WhatsApp and call presses").parentElement).toHaveTextContent("40");
     expect(screen.getByText("Added to basket").parentElement).toHaveTextContent("Nothing in the 30 days before");
+    // presses on "Our app" and the WolfOS section, not counted as contacts
+    const wolfos = screen.getByText("WolfOS presses").parentElement as HTMLElement;
+    expect(wolfos).toHaveTextContent("14");
+    expect(wolfos).toHaveTextContent("100% more than the 30 days before");
   });
 
   it("breaks the visits down by step, button, source, page, product and device", async () => {

@@ -187,7 +187,7 @@ function OrdersTable({
 export function OrdersPage() {
   const t = useTranslations("Orders");
   const { canAny } = useAuth();
-  if (!canAny("order.read.branch", "order.read.all")) {
+  if (!canAny("order.read.branch", "order.read.all", "order.web.handle")) {
     return (
       <>
         <PageHeader title={t("title")} />
@@ -203,12 +203,16 @@ function OrdersManager() {
   const tc = useTranslations("Common");
   const { can } = useAuth();
   const [state, update] = useOrdersUrlState();
-  const readsAll = can("order.read.all");
+  // the call center (order.web.handle) reads every branch's orders, as order.read.all does
+  const handlesWeb = can("order.web.handle");
+  const readsAll = can("order.read.all") || handlesWeb;
+  // the website's orders are the work; the showroom's are kept on their own tab (?source=SHOWROOM)
+  const tab: OrderSourceName = state.source === "SHOWROOM" ? "SHOWROOM" : "WEB";
 
   const filters = useMemo<OrderFilters>(
     () => ({
       status: state.status,
-      source: state.source,
+      source: tab,
       from: state.from,
       to: state.to,
       customerName: state.customerName,
@@ -216,9 +220,10 @@ function OrdersManager() {
       branchId: readsAll ? state.branchId : "",
       page: state.page,
     }),
-    [state.status, state.source, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
+    [state.status, tab, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
   );
-  const filtered = hasFilters(filters);
+  // the tab is where the list is, not a filter to clear
+  const filtered = hasFilters({ ...filters, source: "" });
 
   const orders = useQuery({
     queryKey: orderKeys.list(filters),
@@ -234,8 +239,10 @@ function OrdersManager() {
   });
 
   const setFilter = (patch: Partial<OrderFilters>) => update({ ...patch, page: 1 });
-  const clear = () => update({ ...EMPTY_STATE, open: state.open });
-  const subtitle = readsAll
+  const clear = () => update({ ...EMPTY_STATE, source: state.source, open: state.open });
+  const subtitle = handlesWeb
+    ? t("subtitleCallCenter")
+    : readsAll
     ? can("order.update") || can("order.confirm") || can("order.cancel")
       ? t("subtitleAdmin")
       : t("subtitleAll")
@@ -245,10 +252,9 @@ function OrdersManager() {
     { value: "ALL", label: tc("all") },
     ...ORDER_STATUSES.map((s) => ({ value: s, label: tc(`orderStatus.${s}`) })),
   ];
-  const sourceOptions: { value: OrderSourceName | "ALL"; label: string }[] = [
-    { value: "ALL", label: t("sourceAll") },
-    { value: "SHOWROOM", label: t("sourceShowroom") },
-    { value: "WEB", label: t("sourceWeb") },
+  const tabOptions: { value: OrderSourceName; label: string }[] = [
+    { value: "WEB", label: t("tabWeb") },
+    { value: "SHOWROOM", label: t("tabShowroom") },
   ];
 
   let body;
@@ -279,6 +285,15 @@ function OrdersManager() {
     <>
       <PageHeader title={t("title")} subtitle={subtitle} />
 
+      <Segmented
+        label={t("tabsLabel")}
+        value={tab}
+        options={tabOptions}
+        // the website tab is the page's default: it leaves no ?source= behind
+        onChange={(v) => update({ source: v === "WEB" ? "" : v, status: "", page: 1, open: null })}
+        className="mb-4"
+      />
+
       <section aria-label={tc("filters")} className="mb-4 grid grid-cols-1 gap-4 rounded-[var(--radius-brand-lg)] border border-line p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -287,12 +302,6 @@ function OrdersManager() {
               value={state.status || "ALL"}
               options={statusOptions}
               onChange={(v) => setFilter({ status: v === "ALL" ? "" : v })}
-            />
-            <Segmented
-              label={t("source")}
-              value={state.source || "ALL"}
-              options={sourceOptions}
-              onChange={(v) => setFilter({ source: v === "ALL" ? "" : v })}
             />
           </div>
           {filtered && (

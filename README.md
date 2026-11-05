@@ -4,9 +4,9 @@ This repository contains:
 
 | Part | Where | What |
 |---|---|---|
-| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English). Unchanged except for a **Product catalog** footer link. Staff sign in at `/login` (not linked from the site). |
+| **Website** | `app/[locale]/page.tsx`, `components/` | The public landing page (Arabic/English), with a **Product catalog** footer link and **WolfOS**, our app for the BYD Leopard's screens: an "Our app" button in the header and a section under the hero, both opening wolfcaros.com in a new tab (presses counted in the visitor statistics). Staff sign in at `/login` (not linked from the site). |
 | **Public catalog** | `app/[locale]/products` | Products with image, name, description, category and price. Barcodes never leave the API here. Products without a price cannot be bought online; they are ordered on WhatsApp. |
-| **Online checkout** | `app/[locale]/checkout`, `features/shop/`, `api/src/shop/` | A visitor fills a basket, signs in with a one-time code sent to a Qatari mobile, pays by card through Tap and collects the parts at Bin Omran. The paid order is queued for Odoo and shows in the dashboard as *paid online*. See section 11. |
+| **Online checkout** | `app/[locale]/checkout`, `features/shop/`, `api/src/shop/`, `api/src/email/` | A visitor fills a basket and orders without an account (name, mobile, email), paying by card through Tap or at the branch when collecting the parts at Bin Omran. Order emails and "My account" sign-in codes go by email through Brevo. Paid card orders are queued for Odoo. See section 11. |
 | **Staff dashboards** | `app/[locale]/(app)/(staff)` | One login for everyone; the account's role decides the landing page. Products, pricing, orders, users, branches, permissions, activity log, account security. |
 | **Showroom kiosk** | `app/[locale]/(app)/showroom` | Touch screen in each branch: customers pick products, staff submits the order. Own login and session. |
 | **API** | `api/` | NestJS 12 + PostgreSQL (Prisma 7). Auth, RBAC, orders, online payments, Odoo sync, receipts (PDF), audit log. Swagger at `/api/docs`. |
@@ -52,7 +52,7 @@ npm run dev                       # http://localhost:3000
 Open http://localhost:3000/ar (Arabic, default) or http://localhost:3000/en.
 Staff sign-in: `/ar/login` · Showroom: `/ar/showroom` · Catalog: `/ar/products` · Basket and checkout: `/ar/checkout`.
 
-The checkout needs no Tap account to try locally: see *Payments (Tap)* below.
+The checkout needs no Tap or Brevo account to try locally: see section 11 below.
 
 ### Everything in Docker
 
@@ -140,7 +140,7 @@ There is no public registration: the Super Admin creates every account. New acco
 | `NODE_ENV` | `development` | `development` \| `production` \| `test` |
 | `PORT` | `4000` | HTTP port |
 | `LOG_LEVEL` | `info` | pino level (`silent` … `trace`) |
-| `CORS_ORIGINS` | — (required) | Comma-separated browser origins allowed by CORS |
+| `CORS_ORIGINS` | — (required) | Comma-separated browser origins allowed by CORS. In production only the `https://` ones count |
 | `TRUST_PROXY` | `loopback` | Express `trust proxy` (client IPs in the audit log). Docker: `loopback, uniquelocal` |
 | `SWAGGER_ENABLED` | `false` | Serve Swagger UI at `/api/docs` |
 | `DATABASE_URL` | — (required) | PostgreSQL URL |
@@ -159,7 +159,7 @@ There is no public registration: the Super Admin creates every account. New acco
 | `UPLOAD_DIR` | `./storage/uploads` | Product images (processed WebP files) |
 | `CHROME_PATH` | — | Chromium for receipts; empty = Playwright's browser |
 
-Online checkout (all optional locally; see *Payments (Tap)* for what production needs):
+Online checkout and email (all optional locally; see section 11 for what production needs):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -170,10 +170,13 @@ Online checkout (all optional locally; see *Payments (Tap)* for what production 
 | `API_PUBLIC_URL` | — | The API's public origin, no trailing slash. Tap posts its webhook here. Locally: an ngrok URL |
 | `WEB_ORDERS_BRANCH_CODE` | `BO` | Code of the branch that holds website orders for pickup (Bin Omran) |
 | `CHECKOUT_TTL_MINUTES` | `30` | How long an unpaid website order is kept before it expires. An order with a payment in flight is not expired |
-| `SMS_PROVIDER` | `console` | How sign-in codes are sent. Only `console` exists today: it writes the code to the API log |
+| `EMAIL_PROVIDER` | `console` | `console` writes every email to the API log (development); `brevo` sends them. In production with `console` the API refuses to send sign-in codes (`503 SIGN_IN_UNAVAILABLE`) and only logs order emails |
+| `BREVO_API_KEY` | — | Brevo API key (`xkeysib-…`). Required with `brevo`. Never logged |
+| `EMAIL_FROM` / `EMAIL_FROM_NAME` | — / `Wolf Car` | The sender; the address must be on a domain authenticated in Brevo. Required with `brevo` |
+| `SHOP_NOTIFY_EMAIL` | — | Comma-separated addresses told about every new website order. Empty = nobody |
 | `OTP_DEV_CODE_IN_RESPONSE` | `false` | Return the code in the API response. Development and tests only; the API refuses to start with `true` in production (unless `ALLOW_TEST_CHECKOUT=true`) and always next to an `sk_live_` key |
 | `ALLOW_TEST_CHECKOUT` | `false` | Lets an API running with `NODE_ENV=production` use `PAYMENTS_PROVIDER=fake` and `OTP_DEV_CODE_IN_RESPONSE=true`. Only the browser tests set it (`e2e/env.ts`); the Docker API in `docker-compose.yml` also runs as production, so a local trial with `fake` there needs it. Never on the server, and refused next to an `sk_live_` key |
-| `OTP_PER_PHONE_PER_15_MIN` | `3` | Codes one phone number may ask for in 15 minutes |
+| `OTP_PER_EMAIL_PER_15_MIN` | `3` | Sign-in codes one email address may ask for in 15 minutes |
 | `CUSTOMER_SESSION_TTL_DAYS` | `30` | Customer sign-in lifetime |
 | `ODOO_WRITE_LOGIN` / `ODOO_WRITE_API_KEY` | — | A **separate** Odoo user that creates sale orders for paid web orders (the catalogue sync uses the read-only `ODOO_LOGIN`). Empty = paid orders wait in the queue |
 | `ODOO_WEB_WAREHOUSE_ID` | — | Numeric id of the Odoo warehouse web orders ship from (Bin Omran) |
@@ -327,28 +330,45 @@ api/test/                          API end-to-end tests · e2e/ = Playwright tes
 ```
 
 
-## 11. Payments (Tap)
+## 11. Online orders, payments (Tap) and email (Brevo)
+
+Design: `docs/superpowers/specs/2026-11-04-email-guest-checkout-design.md`.
 
 ### How it works
 
-1. The visitor fills the basket and opens `/ar/checkout`, types a Qatari mobile (8 digits starting with 3, 5, 6 or 7) and the one-time code sent to it.
-2. The API creates the order from the server's prices (the browser never sends a price) and holds it for `CHECKOUT_TTL_MINUTES`.
-3. Tap's card form (loaded from Tap's CDN with the public key) turns the card into a token; the card number never reaches our servers. The API creates the charge and the customer goes through 3-D Secure at Tap, then back to `/ar/checkout/return`.
-4. An order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order.
-5. The paid order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code. There is no e-mail receipt; the cashier prints the usual PDF receipt.
+1. The visitor fills the basket and opens `/ar/checkout`. **No account is needed**: they type their name, a Qatari mobile (8 digits starting with 3, 5, 6 or 7; only for the branch to call, nothing is sent to it) and an email, and choose **pay now by card** or **pay at the branch when collecting**. Without `NEXT_PUBLIC_TAP_PUBLIC_KEY` only "pay at the branch" is offered.
+2. The API creates the order from the server's prices (the browser never sends a price). It belongs to the customer of that email (found or created, never changed by a guest), so it shows up in "My account" once that email signs in. The answer carries the **order key** (an HMAC of the order id with `JWT_ACCESS_SECRET`): the page keeps it in the address (`?order=…&key=…`) and sends it as `X-Order-Key`, which is how a guest reaches their own order.
+3. **Pay at the branch:** the order is `paymentStatus NONE`, never expires, and the customer lands on the thank-you page (`/ar/checkout/return`). They get an email with the order; the shop (`SHOP_NOTIFY_EMAIL`) gets an alert. The cashier calls, *confirms* the order in the dashboard, takes the payment at the till, and marks it *collected*. It is never sent to Odoo as a web sale (the till rings it up).
+4. **Card:** the order is held for `CHECKOUT_TTL_MINUTES`. Tap's card form (loaded from Tap's CDN with the public key) turns the card into a token; the card number never reaches our servers. The API creates the charge and the customer goes through 3-D Secure at Tap, then back to the thank-you page.
+5. A card order becomes **paid** only when the API has seen the charge from Tap itself: a webhook whose `hashstring` signature checks out, or the API reading the charge back. The return page alone never pays an order. The expiry sweep reads the charge back too before it cancels an unpaid order, so a customer who paid and closed the page before coming back still gets a paid order, even if the webhook never arrives; when Tap cannot be asked, the order waits for the next minute. Then the customer gets the receipt by email, the shop an alert, and the order is queued for Odoo (a confirmed sale order with the Tap reference); the Bin Omran cashier sees it as *paid online* and marks it collected when the customer shows the order code.
+6. **My account** (`/account`): sign in with the email and a 6-digit code sent there; the customer's orders (also those placed as a guest with that email) and cars. There is no SMS anywhere. Customers from the earlier phone sign-in (it never launched on the live site, so there should be none) keep their rows and orders but have no email: they cannot sign in, and ordering with an email starts a new customer (migration `20261104100000_email_customers`).
 
-Routes (all under `/api/shop`; non-GET calls carry the `X-Requested-With: wolfcar` header, and the customer cookie is needed except for the code request, sign-in and the webhook):
+Emails go through Brevo's transactional API (`EMAIL_PROVIDER=brevo`; free plan: 300 a day). Order emails are best effort: a failure is logged and never fails the order or the payment. The sign-in code email does fail the request, so the customer knows.
+
+Routes (all under `/api/shop`; non-GET calls carry the `X-Requested-With: wolfcar` header):
 
 | Route | What |
 |---|---|
-| `POST /otp`, `POST /otp/verify` | Ask for and check a sign-in code |
-| `GET /me`, `POST /logout`, `POST /logout-all` | Current customer; sign out here or everywhere |
-| `POST /orders`, `GET /orders/:id`, `POST /orders/:id/cancel` | Create, read and cancel an unpaid order |
-| `POST /orders/:id/pay` | Create the Tap charge for the card token |
-| `POST /orders/:id/reconcile` | Read the charge back from Tap (used by the return page) |
+| `POST /otp`, `POST /otp/verify` | Email a sign-in code and check it (`{ email, locale }`, `{ email, code }`) |
+| `GET /me`, `POST /logout`, `POST /logout-all` | Current customer (cookie); sign out here or everywhere |
+| `POST /orders` | Create an order, signed in or not (`paymentMethod: card | branch`); answers its `key` |
+| `GET /orders` | The signed-in customer's orders |
+| `GET /orders/:id`, `POST /orders/:id/cancel` | Read an order, cancel an unpaid card order: by the cookie, or with `X-Order-Key` |
+| `POST /orders/:id/pay` | Create the Tap charge for the card token (cookie or key); Tap returns the customer to a URL with the key |
+| `POST /orders/:id/reconcile` | Read the charge back from Tap (used by the return page); an order without a charge is answered as it is |
 | `POST /payments/tap/webhook` | Tap's webhook; checked by its `hashstring` header, no cookie |
 
-Staff side, under `/api/orders`: confirm and edit are refused for web orders; *cancel* refunds the card first; `POST /:id/collect` marks collected; `POST /:id/odoo/retry` (permission `order.odoo.retry`, Finance) sends a failed order to Odoo again.
+The dashboard's orders page opens on the **website's orders**; the showroom's are on their own tab. The **call center** (role Reservations) holds `order.web.handle`: it reads every order and confirms, cancels and hands over the website's orders of every branch (never a showroom's; refunding a paid card order stays with the Super Admin). The permission is new, so a deploy grants it to that role by itself; it can be taken away on the permissions page.
+
+Staff side, under `/api/orders`: edit is refused for web orders; *confirm* is refused for card web orders and allowed for pay-at-branch ones; *cancel* refunds the card first; `POST /:id/collect` marks a paid, or confirmed pay-at-branch, web order collected; `POST /:id/odoo/retry` (permission `order.odoo.retry`, Finance) sends a failed order to Odoo again.
+
+### Set up Brevo (email)
+
+1. Brevo → **SMTP & API** → **API keys** → *Generate a new API key*. Put it in `deploy/api.prod.env` as `BREVO_API_KEY`, with `EMAIL_PROVIDER=brevo`. Never commit it.
+2. Brevo → **Senders, domains & dedicated IPs** → **Domains** → add `wolfcar.qa`, then add the DNS records Brevo shows (a Brevo code TXT record, DKIM, and DMARC) where the domain's DNS is managed, and press *Authenticate*. Without this, mail from `wolfcar.qa` lands in spam or is refused.
+3. Set `EMAIL_FROM` to an address on that domain (e.g. `orders@wolfcar.qa`; until `wolfcar.qa` is authenticated, `noreply@wolf-groups.com` already is) and `SHOP_NOTIFY_EMAIL` to whoever should hear about new orders.
+   Brevo blocks API calls from unknown addresses: add the server's IP (`167.172.106.106`, and its IPv6 if it sends over IPv6) under **Security → Authorized IPs**, or every email fails with `unauthorized`. The free plan's 300 emails a day are shared with every other system on the same Brevo account.
+4. Restart the API, then sign in at `/ar/account` with your own email: the code should arrive within a minute.
 
 ### Run it locally without a Tap account
 
@@ -356,20 +376,20 @@ In `api/.env`:
 
 ```
 PAYMENTS_PROVIDER=fake
-SMS_PROVIDER=console
+EMAIL_PROVIDER=console
 OTP_DEV_CODE_IN_RESPONSE=true     # the sign-in code is also returned to the page, so you need not read the log
 WEB_PUBLIC_URL=http://localhost:3000
 API_PUBLIC_URL=http://localhost:4000
 ```
 
-Restart the API. Sign-in codes appear in the API log. The fake gateway keeps charges in memory, so restarting the API forgets them. The website shows *Pay by card* only when it was started or built with a non-empty `NEXT_PUBLIC_TAP_PUBLIC_KEY` (in `.env.local`); without one it is WhatsApp-only, as in production before launch. The card form still loads Tap's script, so for a full click-through use Tap test keys (next section); the Playwright story (`e2e/checkout.spec.ts`) replaces the card form with a stub and needs neither (`npm run e2e:build` bakes a stand-in public key).
+Restart the API. Emails (sign-in codes, order emails) appear in the API log. The fake gateway keeps charges in memory, so restarting the API forgets them. The checkout offers *Pay now by card* only when the website was started or built with a non-empty `NEXT_PUBLIC_TAP_PUBLIC_KEY` (in `.env.local`); without one it takes orders to pay at the branch only. The card form still loads Tap's script, so for a full click-through use Tap test keys (next section); the Playwright story (`e2e/checkout.spec.ts`) replaces the card form with a stub and needs neither (`npm run e2e:build` bakes a stand-in public key).
 
 ### Run it locally with Tap test keys
 
 1. In Tap's dashboard take the **test** keys. Put the secret key in `api/.env` as `TAP_SECRET_KEY=sk_test_…` with `PAYMENTS_PROVIDER=tap`, and the public key in `.env.local` (repo root, git-ignored) as `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_test_…` (optionally `NEXT_PUBLIC_TAP_MERCHANT_ID=…`). Never commit either file.
 2. Tap must reach the webhook from the internet, so expose the API: `ngrok http 4000`, then set `API_PUBLIC_URL=https://<your-tunnel>` in `api/.env` and restart the API. Keep `WEB_PUBLIC_URL=http://localhost:3000`.
 3. Nothing is configured in Tap's dashboard for the webhook: the API passes the webhook URL (`post.url`) with every charge.
-4. Test cards: Visa `4508750015741019` (expiry `01/39`, any CVC) goes through a 3-D Secure challenge; Visa `4012000033330026` (`01/39`, CVC `100`) goes through without one. In our sandbox account both have been ending in `701 RESTRICTED` after the bank's check (see the questions for Tap below). More cards: `developers.tap.company/reference/testing-cards`.
+4. Test cards: Visa `4012000033330026` (`01/39`, CVC `100`) is **captured** (checked 2026-11-04: paid, receipt, refund). Visa `4508750015741019` and Mastercard `5123450000000008` (`01/39`, any CVC) pass 3-D Secure but end in `701 RESTRICTED` in our sandbox account (see the questions for Tap below). More cards: `developers.tap.company/reference/testing-cards`.
 
 If the webhook never arrives (tunnel down), the return page reads the charge back from Tap, so the customer still sees *paid*.
 
@@ -379,32 +399,34 @@ Owner and business:
 
 - [ ] **Tap live keys.** Ask integrations@tap.company to register `wolfcar.qa` for the live public key. Use `sk_live_…` / `pk_live_…` only on the server.
 - [ ] **Refund policy page** on the website (Tap and the acquiring bank ask for it).
-- [ ] **SMS provider and a Qatar sender name** (the sender name has lead time). Only the `console` sender exists, and it logs every sign-in code, so **production must not use it**: the sender has to be written and `SMS_PROVIDER` switched before real customers sign in.
+- [ ] **Brevo** set up as in *Set up Brevo (email)* above: API key, `wolfcar.qa` authenticated, `EMAIL_FROM`, `SHOP_NOTIFY_EMAIL`. Until then nobody can sign in to "My account" on the live site (503), orders still work, and their emails are only logged.
 - [ ] **Odoo:** a dedicated sales user (`ODOO_WRITE_LOGIN`, `ODOO_WRITE_API_KEY`); the Bin Omran warehouse id (`ODOO_WEB_WAREHOUSE_ID`); `ODOO_FALLBACK_PRODUCT_ID`; check one order in the test database for product taxes (the sale order line carries the price paid, so a tax added on confirm would make Odoo's total differ from Tap's); decide whether the accountant wants invoices too.
 
 Server (`deploy/api.prod.env`, see `deploy/api.prod.env.example`):
 
 - [ ] `PAYMENTS_PROVIDER=tap` and `TAP_SECRET_KEY=sk_live_…`.
 - [ ] `WEB_PUBLIC_URL` and `API_PUBLIC_URL` both `https://wolfcar.qa` (one origin behind Caddy). Tap must reach `POST /api/shop/payments/tap/webhook` from the internet: check that Caddy and any firewall let it through.
-- [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` in `deploy/prod.env` (not `api.prod.env`). It is baked into the website when `scripts/deploy.sh` builds it, so set it **before** the deploy that launches card payments. Until it is set the site stays WhatsApp-only, which is how to keep card checkout off while the rest is deployed.
+- [ ] `NEXT_PUBLIC_TAP_PUBLIC_KEY=pk_live_…` in `deploy/prod.env` (not `api.prod.env`). It is baked into the website when `scripts/deploy.sh` builds it, so set it **before** the deploy that launches card payments. Until it is set the checkout takes orders to pay at the branch only, which is how to keep card payment off while the rest is deployed.
+- [ ] `EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `EMAIL_FROM`, `SHOP_NOTIFY_EMAIL`.
 - [ ] Run one API process. The Odoo queue and the expiry sweep run inside it.
 
-**Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `ALLOW_TEST_CHECKOUT=true`, `SMS_PROVIDER=console` with real customers. With `NODE_ENV=production` the API refuses to start with `fake` or `OTP_DEV_CODE_IN_RESPONSE=true` unless `ALLOW_TEST_CHECKOUT=true`, and refuses both next to an `sk_live_` key whatever the flag says.
+**Must never be true in production:** `PAYMENTS_PROVIDER=fake`, `OTP_DEV_CODE_IN_RESPONSE=true`, `ALLOW_TEST_CHECKOUT=true`, `EMAIL_PROVIDER=console` with real customers. With `NODE_ENV=production` the API refuses to start with `fake` or `OTP_DEV_CODE_IN_RESPONSE=true` unless `ALLOW_TEST_CHECKOUT=true`, and refuses both next to an `sk_live_` key whatever the flag says.
 
 Check in the Tap sandbox before launch (the fake gateway cannot tell you):
 
-- [ ] A full 3-D Secure payment with the test card lands on `/checkout/return` and shows *paid*, and the webhook arrives and is accepted (its `hashstring` checks out).
-- [ ] Tap refuses a second refund of the same charge (two staff cancelling at once rely on it).
+- [x] A full 3-D Secure payment with the test card lands on `/checkout/return` and shows *paid* (2026-11-04, a guest, Visa `4012000033330026`; the receipt email went out).
+- [ ] The webhook arrives and is accepted (its `hashstring` checks out). Needs a public tunnel to the API (step 2 above); not tested yet. On the live site: after the first real payment, look for `shop.payment.webhook` with outcome *paid* or *already_paid* in the activity log.
+- [x] Tap refuses a second refund of the same charge (2026-11-04): right after the first it answers `1202 Duplicate Request`, later `1161 Requested refund amount exceeds with available captured amount`.
 - [ ] The card form's valid/invalid events: *Pay* recovers after a corrected card.
-- [ ] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`).
-- [ ] The refund object's `status` values. The API treats `INITIATED`, `PENDING`, `IN_PROGRESS` and `REFUNDED` (any case) as accepted and anything else as `502 REFUND_FAILED` with the status as the reason: check which values a sandbox refund really returns, and that a refused one is not among the four.
-- [ ] The return URL survives Tap appending `tap_id`: Tap sends the customer back to `/checkout/return?order=<id>&tap_id=chg_…`, and the page must still read `order`.
-- [ ] Whether the card SDK requires `merchant.id` (`NEXT_PUBLIC_TAP_MERCHANT_ID`, optional today): if it does, set it before launch.
+- [x] The card form works under the checkout page's headers (`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=()`): the local site sends the same headers, and the payment above went through under them.
+- [x] The refund object's `status` values: a sandbox refund answers `REFUNDED` (response `000`), which the API accepts. The API treats `INITIATED`, `PENDING`, `IN_PROGRESS` and `REFUNDED` (any case) as accepted and anything else as `502 REFUND_FAILED` with the status as the reason.
+- [x] The return URL survives Tap appending `tap_id`: Tap sends the customer back to `/checkout/return?order=<id>&key=<key>&tap_id=chg_…`, and the page reads `order` and `key`.
+- [x] The card SDK does not need `merchant.id` in the sandbox: the site never sends it (`NEXT_PUBLIC_TAP_MERCHANT_ID` is unused). Ask Tap whether live keys do.
 
 Questions and reports for Tap (card SDK 1.0.2, one ticket):
 
 - [ ] **Does our account need the cardholder name?** The card form asks for it (`fields: { cardHolder: true }` in `features/shop/tap-card.tsx`), Tap's field takes English letters only, and the page tells customers so and pre-fills the name when it is already in English letters. If Tap says it is not needed for 3-D Secure or acceptance, set `cardHolder: false` and drop the English-letters sentence from `Checkout.cardHint` and from `errors.TAP_CARD_INVALID`, `errors.PAYMENT_FAILED` and `errors.CARD_REENTER`.
-- [ ] **Why do sandbox test cards end in `701 RESTRICTED`** (gateway `BLOCKED`) after a successful 3-D Secure? Until this is solved no sandbox payment reaches *paid*.
+- [ ] **Why do the 3-D Secure challenge test cards end in `701 RESTRICTED`** (gateway `BLOCKED`) after a successful 3-D Secure? Since 2026-11-04 Visa `4012000033330026` is captured again (it was refused the same way from 2026-10-28), but `4508750015741019` and `5123450000000008` still are. Will real cards that get a bank challenge be refused like this with live keys?
 - [ ] **Can a charge end `AUTHORIZED` without capture, or `UNKNOWN`/`VOID` after the money was held?** The result page says only "The payment didn't go through" until Tap answers.
 - [ ] Defects inside Tap's form to report: while the number is being corrected, the hidden expiry field stays tappable (one tap there, then Backspace, edits the date); the clear-all X has no label and touches the CVV on narrow phones; the Arabic CVV placeholder is cut when the form is wider than about 311px; the "change your keyboard to English" hint is English only and low contrast.
 
@@ -413,7 +435,6 @@ After any card SDK version change (`TAP_SDK_URL` in `features/shop/tap-sdk.ts`),
 ### Limits of phase 1
 
 - Pickup at Bin Omran only; no delivery, no stock check; products without a price are ordered on WhatsApp.
-- No e-mail receipt: the customer shows the order code at the branch.
 - Refunding an order that is already in Odoo does **not** reverse the Odoo sale order; the accountant reverses it by hand. The dashboard says so in the cancel dialog and on the refunded order ("Refunded after it reached Odoo: cancel sale order N in Odoo").
 - Apple Pay and Google Pay, delivery and stock come in phase 2; public PPF booking with a deposit in phase 3.
 - Design and open questions: `docs/superpowers/specs/2026-10-18-online-checkout-phase1-design.md`.

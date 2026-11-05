@@ -13,7 +13,6 @@ import { CatalogGrid } from "@/features/catalog/catalog-grid";
 import { categoryName } from "@/features/catalog/category-name";
 import { ModelSidebar, ModelTabs, QUICK_SERVICE } from "@/features/catalog/model-tabs";
 import { YourCars } from "@/features/catalog/your-cars";
-import { cardCheckoutEnabled } from "@/features/shop/card-checkout";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 import { formatMoney } from "@/lib/format";
@@ -98,7 +97,7 @@ export default async function ProductsPage({
           </section>
 
           {/* a signed-in customer's own cars first (loads in the browser; the page stays cached) */}
-          <YourCars enabled={cardCheckoutEnabled()} selected={selected?.id} />
+          <YourCars selected={selected?.id} />
 
           {/* protection packages are services, not parts: a way across to their page */}
           <Link

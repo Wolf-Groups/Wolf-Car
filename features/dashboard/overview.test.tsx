@@ -15,7 +15,7 @@ describe("Overview", () => {
     }
   });
 
-  it("counts showroom orders as pending (a web order waiting for its card is not the cashier's to act on)", async () => {
+  it("counts the website's pending orders: pay-at-branch orders wait there for the branch's call", async () => {
     const queries: URLSearchParams[] = [];
     server.use(
       http.get("/api/orders", ({ request }) => {
@@ -30,10 +30,10 @@ describe("Overview", () => {
 
     const pending = await screen.findByRole("link", { name: /Pending orders/ });
     await waitFor(() => expect(pending).toHaveTextContent("4"));
-    // the stat opens the same list it counted
-    expect(pending).toHaveAttribute("href", "/dashboard/orders?status=PENDING&source=SHOWROOM");
+    // the stat opens the same list it counted: the website's orders, where pay-at-branch orders wait for the call
+    expect(pending).toHaveAttribute("href", "/dashboard/orders?status=PENDING");
     const pendingQuery = queries.find((q) => q.get("status") === "PENDING");
-    expect(pendingQuery?.get("source")).toBe("SHOWROOM");
+    expect(pendingQuery?.get("source")).toBe("WEB");
     // "Orders today" asks the default list, which leaves abandoned checkouts out on the server
     const today = queries.find((q) => q.get("from") && !q.get("status"));
     expect(today?.get("source")).toBeNull();

@@ -30,7 +30,7 @@ export function testEnv(): Record<string, string> {
     ODOO_WRITE_API_KEY: '',
     PAYMENTS_PROVIDER: 'fake',
     TAP_SECRET_KEY: 'fake-secret',
-    SMS_PROVIDER: 'console',
+    EMAIL_PROVIDER: 'console',
     WEB_PUBLIC_URL: 'http://localhost:3000',
     API_PUBLIC_URL: 'http://localhost:3000',
     JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET ?? 'test-secret-test-secret-test-secret-1234',

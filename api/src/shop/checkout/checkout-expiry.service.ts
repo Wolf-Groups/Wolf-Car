@@ -3,16 +3,27 @@ import { ConfigService } from '@nestjs/config';
 import { ActivityService } from '../../activity/activity.service';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaymentsService, type SettleOutcome } from '../payments/payments.service';
 import { ensureSystemWebUser, SYSTEM_WEB_USERNAME } from './system-web-user';
 
 /** An INITIATED attempt younger than this keeps an expired order alive (a 3-D Secure page may still be open). */
 export const IN_FLIGHT_MINUTES = 15;
 
+/** Settle outcomes worth an activity entry from the sweep, and whether the entry is a FAILURE. */
+const LOGGED_OUTCOMES: Partial<Record<SettleOutcome, 'SUCCESS' | 'FAILURE'>> = {
+  paid: 'SUCCESS',
+  amount_mismatch: 'FAILURE',
+  duplicate_capture: 'FAILURE',
+};
+
 /**
  * Cancels unpaid web orders past expiresAt, every minute (same pattern as
  * OdooSyncService: setInterval, unref, off in tests). Never touches an order
- * with a CAPTURED attempt or an attempt in flight. One activity entry
- * (shop.order.expire, actor system.web) per order.
+ * with a CAPTURED attempt or an attempt in flight. Before cancelling, asks Tap
+ * about the order's open attempts (a payment whose webhook never came pays
+ * the order instead: shop.order.reconcile, via expiry); an order Tap cannot be
+ * asked about waits for the next round. One activity entry (shop.order.expire,
+ * actor system.web) per cancelled order.
  */
 @Injectable()
 export class CheckoutExpiryService implements OnModuleInit, OnModuleDestroy {
@@ -23,6 +34,7 @@ export class CheckoutExpiryService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<Env, true>,
     private readonly activity: ActivityService,
+    private readonly payments: PaymentsService,
   ) {}
 
   onModuleInit(): void {
@@ -57,7 +69,8 @@ export class CheckoutExpiryService implements OnModuleInit, OnModuleDestroy {
     const cancelledById = await ensureSystemWebUser(this.prisma);
     let cancelled = 0;
     for (const order of due) {
-      // conditional: a payment settled since the select must not be cancelled
+      if (!(await this.askTap(order))) continue;
+      // conditional: a payment settled since the select (or just now by askTap) must not be cancelled
       const { count } = await this.prisma.order.updateMany({
         where: { id: order.id, status: 'PENDING', paymentStatus: 'PENDING', payments: { none: { status: 'CAPTURED' } } },
         data: { status: 'CANCELLED', cancelledAt: now, cancelledById },
@@ -75,5 +88,32 @@ export class CheckoutExpiryService implements OnModuleInit, OnModuleDestroy {
       });
     }
     return cancelled;
+  }
+
+  /** settleBeforeExpiry, logged; false keeps the order for the next round (Tap or the database could not answer). */
+  private async askTap(order: { id: string; branchId: string }): Promise<boolean> {
+    let check;
+    try {
+      check = await this.payments.settleBeforeExpiry(order.id);
+    } catch (err) {
+      this.logger.warn(`Before expiring order ${order.id}: ${err instanceof Error ? err.message : 'unknown error'}`);
+      return false;
+    }
+    for (const { chargeId, outcome } of check.settled) {
+      const logged = LOGGED_OUTCOMES[outcome];
+      if (!logged) continue;
+      await this.activity.record({
+        action: 'shop.order.reconcile',
+        outcome: logged,
+        entityType: 'Order',
+        entityId: order.id,
+        branchId: order.branchId,
+        actorId: null,
+        actorUsername: SYSTEM_WEB_USERNAME,
+        metadata: { via: 'expiry', chargeId, outcome },
+      });
+    }
+    if (!check.reachable) this.logger.warn(`Order ${order.id} expired but Tap could not be asked about its payment: kept for the next round`);
+    return check.reachable;
   }
 }

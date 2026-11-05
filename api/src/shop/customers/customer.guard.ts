@@ -13,7 +13,7 @@ export interface CustomerRequest extends Request {
  * For the @Public() /api/shop routes: the request must carry a valid customer
  * cookie (wc_cst). Non-GET requests also need the CSRF header, as every
  * cookie-authenticated route does. Sets the audit actor to the customer
- * (username = phone, no id, no role) so the activity log names who acted.
+ * (username = email, no id, no role) so the activity log names who acted.
  */
 @Injectable()
 export class CustomerGuard implements CanActivate {
@@ -26,7 +26,7 @@ export class CustomerGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<CustomerRequest>();
     const customer = await this.customers.loadFromToken(readCustomerCookie(req));
     req.customer = customer;
-    this.trail.setActor({ id: null, username: customer.phone, role: null, branchId: null });
+    this.trail.setActor({ id: null, username: customer.email, role: null, branchId: null });
     if (req.method !== 'GET' && !hasCsrfHeader(req)) throw csrfRefused();
     return true;
   }

@@ -16,11 +16,11 @@ import { cart, cartTotals, orderMessage, useCart } from "./cart";
 import { QtyStepper } from "./catalog-grid";
 
 /**
- * Floating basket button plus the drawer it opens. "Pay by card" goes to the
- * online checkout (priced lines only); "Order on WhatsApp", the second way,
- * sends the whole list to the Bin Omran branch, which handles online orders.
- * Without card checkout (a build without Tap's public key, or no priced line
- * to pay for) WhatsApp is the only way, as the main button.
+ * Floating basket button plus the drawer it opens. "Checkout" goes to the
+ * online checkout (priced lines only; paid by card, or at the branch when the
+ * build has no Tap key); "Order on WhatsApp", the second way, sends the whole
+ * list to the Bin Omran branch, which handles online orders. Without a priced
+ * line WhatsApp is the only way, as the main button.
  */
 export function CartSheet() {
   const t = useTranslations("Cart");
@@ -29,7 +29,9 @@ export function CartSheet() {
   const [open, setOpen] = useState(false);
   const { total, count, unpriced } = cartTotals(items);
   const branch = getBranches(locale).binomran;
-  const byCard = cardCheckoutEnabled() && items.some((l) => l.price !== null);
+  // any priced line can be ordered here: by card when the build has Tap's key, at the branch either way
+  const online = items.some((l) => l.price !== null);
+  const card = cardCheckoutEnabled();
 
   return (
     <Direction.Provider dir={locale === "ar" ? "rtl" : "ltr"}>
@@ -57,7 +59,7 @@ export function CartSheet() {
           <SheetContent side="end" closeLabel={t("close")} className="gap-0 sm:max-w-md">
             <SheetHeader className="border-b border-line pb-4">
               <SheetTitle>{t("title")}</SheetTitle>
-              <SheetDescription>{t(byCard ? "description" : "descriptionWhatsapp", { branch: branch.short })}</SheetDescription>
+              <SheetDescription>{t(online ? (card ? "description" : "descriptionBranch") : "descriptionWhatsapp", { branch: branch.short })}</SheetDescription>
             </SheetHeader>
 
             <SheetBody className="py-2">
@@ -101,16 +103,16 @@ export function CartSheet() {
                   <span className="font-bold text-ink-2">{t("total")}</span>
                   <b className="text-xl font-extrabold tabular-nums">{formatMoney(total, locale)}</b>
                 </div>
-                {unpriced > 0 && <p className="text-xs text-muted">{t(byCard ? "unpricedNote" : "unpricedNoteWhatsapp", { count: unpriced })}</p>}
-                {byCard && (
+                {unpriced > 0 && <p className="text-xs text-muted">{t(online ? "unpricedNote" : "unpricedNoteWhatsapp", { count: unpriced })}</p>}
+                {online && (
                   <>
                     {/* checkout_start is counted once, by the details step, not by this link */}
                     <Link
                       href="/checkout"
                       className="inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-accent px-5 text-[17px] font-bold text-white hover:bg-accent-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink"
                     >
-                      <Icon name="card" className="size-5" />
-                      {t("payByCard")}
+                      <Icon name="box" className="size-5" />
+                      {t("checkoutOnline")}
                     </Link>
                     <p className="text-center text-[13px] text-muted">{t("orWhatsapp")}</p>
                   </>
@@ -121,12 +123,12 @@ export function CartSheet() {
                   rel="noopener"
                   data-track="whatsapp_order"
                   className={
-                    byCard
+                    online
                       ? "inline-flex min-h-12 items-center justify-center gap-2 rounded-[var(--radius-brand)] border-[1.5px] border-wa/50 px-5 text-[15px] font-bold text-ink hover:border-wa hover:bg-wa/5"
                       : "inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[var(--radius-brand)] bg-wa px-5 text-[17px] font-bold text-white hover:brightness-95"
                   }
                 >
-                  <Icon name="wa" className={byCard ? "size-5 text-wa" : "size-5"} />
+                  <Icon name="wa" className={online ? "size-5 text-wa" : "size-5"} />
                   {t("checkout", { branch: branch.short })}
                 </a>
                 <button type="button" onClick={() => cart.clear()} className="min-h-11 text-sm font-semibold text-muted hover:text-ink">

@@ -9,8 +9,11 @@ export const CART_KEY = "wolfcar.cart.v1";
 export const HINT_COOKIE = "wc_customer";
 
 export function customer(over: Partial<CustomerProfile> = {}): CustomerProfile {
-  return { phone: "+97455123456", name: "Sara Ali", email: "sara@example.com", ...over };
+  return { email: "sara@example.com", name: "Sara Ali", phone: "+97455123456", ...over };
 }
+
+/** The key the API hands out with a new order (any 32 base64url characters). */
+export const ORDER_KEY = "k".repeat(32);
 
 /** An unpaid web order of Dash Cam ×1 + Floor Mats ×1 (the API e2e's basket). */
 export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
@@ -19,6 +22,7 @@ export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
     code: "BO-000001",
     status: "PENDING",
     paymentStatus: "PENDING",
+    paymentMethod: "card",
     total: "619.50",
     currency: "QAR",
     createdAt: "2031-03-10T09:00:00.000Z",
@@ -34,6 +38,11 @@ export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
     lastPayment: null,
     ...over,
   };
+}
+
+/** Placed to pay at the branch: nothing online, no expiry, waiting for the branch to call. */
+export function branchOrder(over: Partial<WebOrder> = {}): WebOrder {
+  return webOrder({ paymentStatus: "NONE", paymentMethod: "branch", expiresAt: null, ...over });
 }
 
 export function paidOrder(over: Partial<WebOrder> = {}): WebOrder {

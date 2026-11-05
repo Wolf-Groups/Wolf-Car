@@ -9,7 +9,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { AuthThrottle } from '../../common/decorators/auth-throttle.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { Env } from '../../config/env';
-import { SaveCarsDto, SendOtpDto, VerifyOtpDto } from '../dto/shop.dto';
+import { SaveCarsDto, SendCodeDto, VerifyCodeDto } from '../dto/shop.dto';
 import { CsrfGuard } from './csrf.guard';
 import { CurrentCustomer } from './current-customer.decorator';
 import { CustomerCarsService, type CustomerCarView } from './customer-cars.service';
@@ -39,20 +39,20 @@ export class ShopAuthController {
     return this.config.get('COOKIE_SECURE', { infer: true });
   }
 
-  /** Before sign-in the activity log names the phone the visitor typed. */
-  private actAs(phone: string): void {
-    this.trail.setActor({ id: null, username: phone, role: null, branchId: null });
+  /** Before sign-in the activity log names the email the visitor typed. */
+  private actAs(email: string): void {
+    this.trail.setActor({ id: null, username: email, role: null, branchId: null });
   }
 
-  /** Sends a code. Same answer whether or not the phone is known. */
+  /** Emails a code. Same answer whether or not the address is known; 503 SIGN_IN_UNAVAILABLE when email is not set up. */
   @UseGuards(CsrfGuard)
   @AuthThrottle()
   @Audit('shop.otp.send', { entity: 'Customer' })
   @Post('otp')
   @HttpCode(200)
-  sendOtp(@Body() dto: SendOtpDto): Promise<{ expiresAt: Date; devCode?: string }> {
-    this.actAs(dto.phone);
-    return this.otp.issue(dto.phone);
+  sendOtp(@Body() dto: SendCodeDto): Promise<{ expiresAt: Date; devCode?: string }> {
+    this.actAs(dto.email);
+    return this.otp.issue(dto.email, dto.locale);
   }
 
   /** Sets the httpOnly wc_cst cookie (path /api/shop) and the readable wc_customer hint. */
@@ -61,13 +61,13 @@ export class ShopAuthController {
   @Audit('shop.otp.verify', { entity: 'Customer' })
   @Post('otp/verify')
   @HttpCode(200)
-  async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response): Promise<{ customer: CustomerProfileView; expiresAt: Date }> {
-    this.actAs(dto.phone);
-    const { customer, created } = await this.otp.verify(dto.phone, dto.code);
+  async verifyOtp(@Body() dto: VerifyCodeDto, @Res({ passthrough: true }) res: Response): Promise<{ customer: CustomerProfileView; expiresAt: Date }> {
+    this.actAs(dto.email);
+    const { customer, created } = await this.otp.verify(dto.email, dto.code);
     this.trail.setEntity('Customer', customer.id).addMetadata({ created });
     const { token, expiresAt } = await this.tokens.signCustomer(customer.id, customer.sessionVersion);
     setCustomerCookie(res, token, expiresAt, this.secure);
-    return { customer: { phone: customer.phone, name: customer.name, email: customer.email }, expiresAt };
+    return { customer: { email: customer.email, name: customer.name, phone: customer.phone }, expiresAt };
   }
 
   @ApiCookieAuth('wc_cst')

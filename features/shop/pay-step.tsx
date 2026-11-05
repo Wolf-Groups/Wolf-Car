@@ -12,7 +12,7 @@ import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { paidOrHeld } from "./checkout-state";
 import { OrderLines } from "./order-lines";
-import { shop } from "./shop-api";
+import { orderPath, shop } from "./shop-api";
 import { TAP_CARD_CONTAINER_ID, TAP_CARD_INVALID, TapCard, type TapCardHandle } from "./tap-card";
 import type { TapToken } from "./tap-sdk";
 import { useCheckoutError } from "./use-checkout-error";
@@ -20,6 +20,8 @@ import { WhatsAppOrderLink } from "./whatsapp-order-link";
 
 export interface PayStepProps {
   order: WebOrder;
+  /** the order's key: a guest pays with it, and the return page opens with it */
+  orderKey?: string | null;
   publicKey: string;
   locale: "ar" | "en";
   /** the order expired (ORDER_NOT_PAYABLE): back to the details step */
@@ -48,8 +50,8 @@ interface PayError {
   reload?: boolean;
 }
 
-/** Step 4: total, pickup branch, the Tap card and the Pay button; follows Tap's redirect. */
-export function PayStep({ order, publicKey, locale, onBack, resumed = false }: PayStepProps) {
+/** Step 2: total, pickup branch, the Tap card and the Pay button; follows Tap's redirect. */
+export function PayStep({ order, orderKey = null, publicKey, locale, onBack, resumed = false }: PayStepProps) {
   const t = useTranslations("Checkout");
   const message = useCheckoutError();
   const router = useRouter();
@@ -72,6 +74,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
   const branch = locale === "ar" ? order.branch.nameAr : order.branch.name;
   const name = order.customer.name?.trim() ?? "";
   const total = formatMoney(order.total, locale);
+  const returnPage = orderPath("/checkout/return", order.id, orderKey);
 
   // Back from Tap's 3-D Secure page, the browser may restore this page as it was left: "Processing…"
   useEffect(() => {
@@ -82,9 +85,9 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
       if (!paying.current) return setBusy(false);
       // That charge may have been decided at the bank since: Tap is asked before Pay is offered again.
       // Pay stays off meanwhile; a second press now could charge twice.
-      shop.reconcile(order.id).then(
+      shop.reconcile(order.id, orderKey).then(
         (latest) => {
-          if (paidOrHeld(latest)) return router.replace(`/checkout/return?order=${order.id}`);
+          if (paidOrHeld(latest)) return router.replace(returnPage);
           paying.current = false;
           setBusy(false);
           // Tap emptied its form when it took the card: either way the card is typed again
@@ -99,7 +102,7 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
     };
     window.addEventListener("pageshow", restored);
     return () => window.removeEventListener("pageshow", restored);
-  }, [order.id, router, t]);
+  }, [order.id, orderKey, returnPage, router, t]);
 
   useEffect(() => {
     if (expired) backButton.current?.focus();
@@ -129,10 +132,10 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
       token = await card.current.tokenize();
       setProcessing(token);
       setAnnouncement(t("confirming"));
-      const { redirectUrl } = await shop.pay(order.id, token.id, locale);
+      const { redirectUrl } = await shop.pay(order.id, token.id, locale, orderKey);
       // the page is being left: Pay stays disabled
       if (redirectUrl) window.location.assign(redirectUrl);
-      else router.push(`/checkout/return?order=${order.id}`);
+      else router.push(returnPage);
     } catch (e) {
       paying.current = false;
       setBusy(false);
@@ -140,14 +143,14 @@ export function PayStep({ order, publicKey, locale, onBack, resumed = false }: P
       setAnnouncement("");
       if (e instanceof ApiError && e.code === "ORDER_NOT_PAYABLE") return setExpired(true);
       // paid meanwhile (another tab, an earlier try that went through): its result page has the order code
-      if (e instanceof ApiError && e.code === "ALREADY_PAID") return router.replace(`/checkout/return?order=${order.id}`);
+      if (e instanceof ApiError && e.code === "ALREADY_PAID") return router.replace(returnPage);
       if (e instanceof ApiError && e.code === "CHECKOUT_UNAVAILABLE") return setError({ text: message(e), whatsapp: true });
       if (e instanceof Error && e.message === TAP_CARD_INVALID) {
         setError({ text: t("errors.TAP_CARD_INVALID") });
         return scrollToCard();
       }
-      // Signed out meanwhile (another tab), or another number is signed in now: typing the card again
-      // cannot help. A reload asks for the code, or starts over for whoever is signed in.
+      // The order no longer opens from here (signed out in another tab, without its key): typing the card
+      // again cannot help. A reload starts over.
       if (token && e instanceof ApiError && (e.status === 401 || e.status === 404)) return setError({ text: t("errors.SESSION_CHANGED"), reload: true });
       // Tap empties its form as soon as it issues a token: from here on, trying again needs the card typed again
       if (token) {

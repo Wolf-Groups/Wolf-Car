@@ -2,7 +2,7 @@ import type { StockInfo } from "@/lib/stock";
 import type { VariantInfo } from "@/lib/variants";
 import type { SiteDevice, SiteSource } from "@/shared/analytics";
 import type { OrderStatusName, PermissionGroup, PermissionKey, RoleName } from "@/shared/permissions";
-import type { OrderSourceName, PaymentStatusName } from "@/shared/shop";
+import type { OrderSourceName, PaymentMethod, PaymentStatusName } from "@/shared/shop";
 
 export type { OrderSourceName, OrderStatusName, PaymentStatusName, PermissionKey, RoleName };
 
@@ -215,10 +215,11 @@ export interface OrderDetail extends OrderSummary {
 // ---- online checkout (the website's customer, not staff) ----
 
 export interface CustomerProfile {
-  /** E.164, "+97455123456" */
-  phone: string;
+  /** what they signed in with, lower-case */
+  email: string;
   name: string | null;
-  email: string | null;
+  /** E.164, "+97455123456"; last typed at checkout */
+  phone: string | null;
 }
 
 export interface WebOrderItem {
@@ -244,6 +245,8 @@ export interface WebOrder {
   code: string;
   status: OrderStatusName;
   paymentStatus: PaymentStatusName;
+  /** "branch": paid at the branch on collection (paymentStatus NONE) */
+  paymentMethod: PaymentMethod;
   /** "619.50" */
   total: string;
   currency: string;
@@ -496,6 +499,8 @@ export interface AnalyticsTotals {
   visitorsAdded: number;
   visitorsOrdered: number;
   visitorsContacted: number;
+  /** presses on a link to WolfOS, our app */
+  wolfos: number;
 }
 
 /** Visitor statistics of the public website between two Qatar days. */

@@ -14,6 +14,15 @@ const finance = () => makeUser({ username: "finance", displayName: "Finance", ro
 const person = { id: "00000000-0000-4000-8000-0000000000c1", username: "gh.cashier", displayName: "GH Cashier" };
 const branch = { id: "b-gh", code: "GH", name: "Al Gharrafa Branch", nameAr: "فرع الغرافة" };
 
+describe("orders page for the call center", () => {
+  it("opens on the website's orders of every branch, with the branch column", async () => {
+    server.use(http.get("/api/orders", () => HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 20 })));
+    renderWithApp(<OrdersPage />, { user: makeUser({ role: "RESERVATIONS", branch: null, permissions: ["booking.ppf.read", "order.web.handle"] }) });
+    expect(await screen.findByText("Website orders of every branch: call the customer, confirm, and follow them to the hand-over. Showroom orders have their own tab.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
 describe("orders page permissions", () => {
   it("shows a no-access state (and asks the API nothing) without an order.read permission", async () => {
     const requested = vi.fn();
@@ -191,7 +200,7 @@ describe("orders: filters", () => {
     );
     const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
     await screen.findByRole("button", { name: "Open order GH-000042" });
-    expect(requests.at(-1)?.toString()).toBe("page=1&pageSize=20");
+    expect(requests.at(-1)?.toString()).toBe("source=WEB&page=1&pageSize=20");
 
     await user.click(screen.getByRole("button", { name: "Pending" }));
     await waitFor(() => expect(requests.at(-1)?.get("status")).toBe("PENDING"));
@@ -206,7 +215,7 @@ describe("orders: filters", () => {
     expect(window.location.search).toBe("?status=PENDING&customerName=Sara&orderNumber=42");
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("page=1&pageSize=20"));
+    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=WEB&page=1&pageSize=20"));
     expect(screen.getByLabelText("Customer name")).toHaveValue("");
     expect(window.location.search).toBe("");
   });
@@ -270,13 +279,39 @@ describe("orders: web orders", () => {
     expect(within(row("BO-000011")).queryByText("Awaiting payment")).not.toBeInTheDocument();
   });
 
-  it("tells branch staff the list holds their showroom's and the website's orders", async () => {
+  it("tells branch staff the list is the website's orders, with the showroom's on their own tab", async () => {
     server.use(http.get("/api/orders", () => HttpResponse.json(page(makeOrder()))));
     renderWithApp(<OrdersPage />, { user: cashier() });
-    expect(await screen.findByText("Orders from your branch's showroom and website.")).toBeInTheDocument();
+    expect(await screen.findByText("Website orders for your branch: call, prepare and hand them over. Showroom orders have their own tab.")).toBeInTheDocument();
   });
 
-  it("filters by source and keeps it in the URL", async () => {
+  it("opens on the website's orders, and keeps the showroom's on a second tab, in the URL", async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/orders", ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json(page(web("BO-000007", { paymentStatus: "PENDING" })));
+      }),
+    );
+    const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order BO-000007" });
+    expect(requests.at(-1)?.get("source")).toBe("WEB");
+
+    const tabs = screen.getByRole("group", { name: "Orders" });
+    expect(within(tabs).getByRole("button", { name: "Website orders" })).toHaveAttribute("aria-pressed", "true");
+    // the old "all sources" mix is gone
+    expect(screen.queryByRole("button", { name: "All sources" })).not.toBeInTheDocument();
+    await user.click(within(tabs).getByRole("button", { name: "Showroom orders" }));
+    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("SHOWROOM"));
+    expect(window.location.search).toBe("?source=SHOWROOM");
+
+    await user.click(within(tabs).getByRole("button", { name: "Website orders" }));
+    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("WEB"));
+    expect(window.location.search).toBe("");
+  });
+
+  it("keeps the tab when the filters are cleared", async () => {
+    window.history.replaceState(null, "", "/en/dashboard/orders?source=SHOWROOM&status=PENDING");
     const requests: URLSearchParams[] = [];
     server.use(
       http.get("/api/orders", ({ request }) => {
@@ -286,25 +321,13 @@ describe("orders: web orders", () => {
     );
     const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
     await screen.findByRole("button", { name: "Open order GH-000042" });
-    expect(requests.at(-1)?.has("source")).toBe(false);
-
-    const source = screen.getByRole("group", { name: "Source" });
-    expect(within(source).getByRole("button", { name: "All sources" })).toHaveAttribute("aria-pressed", "true");
-    await user.click(within(source).getByRole("button", { name: "Web" }));
-    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("WEB"));
-    expect(within(source).getByRole("button", { name: "Web" })).toHaveAttribute("aria-pressed", "true");
-    expect(window.location.search).toBe("?source=WEB");
-
-    await user.click(within(source).getByRole("button", { name: "Showroom" }));
-    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("SHOWROOM"));
-
-    await user.click(within(source).getByRole("button", { name: "All sources" }));
-    await waitFor(() => expect(requests.at(-1)?.has("source")).toBe(false));
-    expect(window.location.search).toBe("");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=SHOWROOM&page=1&pageSize=20"));
+    expect(window.location.search).toBe("?source=SHOWROOM");
   });
 
-  it("opens ?source=WEB already filtered", async () => {
-    window.history.replaceState(null, "", "/en/dashboard/orders?source=WEB");
+  it.each(["WEB", ""])("opens ?source=%s on the website's orders", async (source) => {
+    window.history.replaceState(null, "", `/en/dashboard/orders${source ? `?source=${source}` : ""}`);
     const requests: URLSearchParams[] = [];
     server.use(
       http.get("/api/orders", ({ request }) => {
@@ -315,6 +338,6 @@ describe("orders: web orders", () => {
     renderWithApp(<OrdersPage />, { user: cashier() });
     await screen.findByRole("button", { name: "Open order BO-000007" });
     expect(requests[0].get("source")).toBe("WEB");
-    expect(within(screen.getByRole("group", { name: "Source" })).getByRole("button", { name: "Web" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByRole("group", { name: "Orders" })).getByRole("button", { name: "Website orders" })).toHaveAttribute("aria-pressed", "true");
   });
 });
