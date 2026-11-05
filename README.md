@@ -140,7 +140,7 @@ There is no public registration: the Super Admin creates every account. New acco
 | `NODE_ENV` | `development` | `development` \| `production` \| `test` |
 | `PORT` | `4000` | HTTP port |
 | `LOG_LEVEL` | `info` | pino level (`silent` … `trace`) |
-| `CORS_ORIGINS` | — (required) | Comma-separated browser origins allowed by CORS |
+| `CORS_ORIGINS` | — (required) | Comma-separated browser origins allowed by CORS. In production only the `https://` ones count |
 | `TRUST_PROXY` | `loopback` | Express `trust proxy` (client IPs in the audit log). Docker: `loopback, uniquelocal` |
 | `SWAGGER_ENABLED` | `false` | Serve Swagger UI at `/api/docs` |
 | `DATABASE_URL` | — (required) | PostgreSQL URL |

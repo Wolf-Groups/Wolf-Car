@@ -321,8 +321,13 @@ export function notifyEmails(env: Pick<Env, 'SHOP_NOTIFY_EMAIL'>): string[] {
     .filter(Boolean);
 }
 
-export function corsOrigins(env: Pick<Env, 'CORS_ORIGINS'>): string[] {
+/**
+ * CORS_ORIGINS as a list. Production keeps only https origins: the site is HTTPS-only
+ * (HSTS), and a leftover entry like http://localhost:3000 would let any page on a
+ * visitor's machine pass the preflight that the CSRF header relies on.
+ */
+export function corsOrigins(env: Pick<Env, 'CORS_ORIGINS' | 'NODE_ENV'>): string[] {
   return env.CORS_ORIGINS.split(',')
     .map((o) => o.trim())
-    .filter(Boolean);
+    .filter((o) => o && (env.NODE_ENV !== 'production' || o.startsWith('https://')));
 }

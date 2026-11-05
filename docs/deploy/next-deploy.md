@@ -24,6 +24,11 @@ plan: `docs/superpowers/plans/2026-11-04-email-guest-checkout.md`, README sectio
   not a cancelled one. Checked against Tap's sandbox on 2026-11-04.
 - Every page of the website now sends HSTS (`max-age=31536000; includeSubDomains`, as the API already did) and
   `X-Content-Type-Options: nosniff`, and no longer says `X-Powered-By: Next.js`.
+- Library security updates (2026-11-05): `next` 16.4.5, NestJS 12.3.3, `multer` 2.5.0, `prisma` 7.10.1, `sharp` 0.35.5,
+  `zod` 4.6.7, `vitest` 5.1.0, plus the fixed sub-packages. `npm audit`: website 0; API 5 *low*, all one package
+  (`deepmerge` inside the test runner `jest`, never on the server; no fixed version exists yet).
+- In production the API's CORS list keeps only `https://` origins: the `http://localhost:3000` still in the server's
+  `CORS_ORIGINS` no longer counts.
 - DB migration `20261104100000_email_customers`: email becomes the customer identity. **Irreversible**: drops the
   phone unique index, deletes all `customer_otps`, lower-cases and de-duplicates customer emails.
 
@@ -52,8 +57,8 @@ Safe to add before the new code is deployed (the running version ignores them). 
 - [ ] `EMAIL_FROM_NAME=Wolf Car`
 - [ ] `SHOP_NOTIFY_EMAIL=<call center email>,<manager email>` (who hears about every new website order)
 - [ ] Check `TRUST_PROXY=loopback, uniquelocal` is there (per-visitor rate limits depend on it).
-- [ ] Remove `http://localhost:3000` from `CORS_ORIGINS` (the template still lists it; production does not need it).
-- Optional clean-up: remove `SMS_PROVIDER` and `OTP_PER_PHONE_PER_15_MIN` (no longer read).
+- Optional clean-up: remove `SMS_PROVIDER` and `OTP_PER_PHONE_PER_15_MIN` (no longer read), and `http://localhost:3000`
+  from `CORS_ORIGINS` (the new API ignores `http://` origins in production anyway).
 
 ## 3. Deploy
 
@@ -90,10 +95,11 @@ Safe to add before the new code is deployed (the running version ignores them). 
   placing orders and on sign-in codes.
 - **Live site** (read only): no `/.env`, `/.git`, docs or metrics exposed; http redirects to https; Tap's webhook
   route answers from the internet (`503` while card payments are off), so Tap will reach it.
-- [ ] **Library updates** (`npm audit`, nothing reachable here today, worth doing before card payments go live):
-      `next` 16.3.5 → 16.4.5 (critical advisory in `next/og`, which the site does not use), `sharp` → 0.35.5 (SVG
-      decoding; uploads accept only JPEG/PNG/WebP), `zod` → 4.6.7, `prisma` → 7.10.1, `@nestjs/platform-express`
-      → 12.3.3 (denial-of-service fixes). Run the full test suites after.
+- [x] **Library updates** (done 2026-11-05, see "What this deploy brings"). Checked after: API unit 723/723 and
+      e2e 998/999, website lint/types clean, vitest and Playwright with only the failures listed in section 5 or
+      known from before, both Docker images built with `npm ci`, the 59 attacks again with the same results.
+      The dev-only `minimatch`/`glob` fixes are `overrides` in `package.json` and `api/package.json`; drop them once
+      `typescript-eslint`, `@nestjs/cli` and `jest` ship the fixed versions themselves.
 
 ## 5. Still open from before (not blocking this deploy)
 

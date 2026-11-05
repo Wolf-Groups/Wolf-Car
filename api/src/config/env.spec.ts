@@ -32,7 +32,11 @@ describe('validateEnv', () => {
   });
 
   it('splits the CORS allowlist', () => {
-    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS })).toEqual(['http://localhost:3000', 'https://wolfcar.qa']);
+    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS, NODE_ENV: 'development' })).toEqual(['http://localhost:3000', 'https://wolfcar.qa']);
+  });
+
+  it('keeps only https origins in production, so a leftover http://localhost entry cannot pass the preflight', () => {
+    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS, NODE_ENV: 'production' })).toEqual(['https://wolfcar.qa']);
   });
 
   describe('online checkout (Task 1 of the online-checkout plan adds these to Env)', () => {
