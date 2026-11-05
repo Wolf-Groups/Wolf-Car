@@ -60,6 +60,9 @@ Safe to add before the new code is deployed (the running version ignores them). 
 - [ ] `EMAIL_FROM=noreply@wolf-groups.com`
 - [ ] `EMAIL_FROM_NAME=Wolf Car`
 - [ ] `SHOP_NOTIFY_EMAIL=<call center email>,<manager email>` (who hears about every new website order)
+- [ ] Check `WEB_PUBLIC_URL=https://wolfcar.qa` and `API_PUBLIC_URL=https://wolfcar.qa` are there (the server's file may
+      predate them): without the first, order emails go out with no link to the order; without either, card checkout
+      answers "not available".
 - [ ] Check `TRUST_PROXY=loopback, uniquelocal` is there (per-visitor rate limits depend on it).
 - Optional clean-up: remove `SMS_PROVIDER` and `OTP_PER_PHONE_PER_15_MIN` (no longer read), and `http://localhost:3000`
   from `CORS_ORIGINS` (the new API ignores `http://` origins in production anyway).
