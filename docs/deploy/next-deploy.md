@@ -21,13 +21,16 @@ review plan; each line names the English section that has the details and comman
       (سيب «WolfCarOs (Adel)» لأن WolfOS بيستخدمه).
 - [ ] Brevo: ضيف IP السيرفر `167.172.106.106` في Authorized IPs، وإلا Brevo يرفض يبعت.
 - [ ] على السيرفر في `api.prod.env`: `EMAIL_PROVIDER` و `BREVO_API_KEY` و `EMAIL_FROM` و `EMAIL_FROM_NAME`،
-      و `SHOP_NOTIFY_EMAIL` (إيميلات الكول سنتر والمدير اللي يجيلهم تنبيه مع كل طلب).
+      و `SHOP_NOTIFY_EMAIL` (إيميلات الكول سنتر والمدير اللي يجيلهم تنبيه مع كل طلب). السكريبت `deploy/email-env.sh`
+      بيعملهم كلهم: بيسألك عن المفتاح من غير ما يظهر، ويجرّبه مع Brevo من السيرفر (الأوامر في أوله).
 - [ ] على السيرفر: اتأكد إن `WEB_PUBLIC_URL` و `API_PUBLIC_URL` موجودين وقيمتهم `https://wolfcar.qa`
       (من غيرهم الإيميلات بتطلع من غير لينك الطلب، والدفع بالبطاقة ما يشتغلش).
 
 ### ٢. الرفع (القسم 3)
-- [ ] اعرف السيرفر بيسحب من أنهي GitHub: `Wolf-Groups` ولا `OmarElbasel` (الاتنين فيهم نفس `main` دلوقتي).
-- [ ] نسخة احتياطية من قاعدة البيانات قبل الرفع: التحديث بيغيّر جدول العملاء ومينفعش يترجع.
+- [x] اعرف السيرفر بيسحب من أنهي GitHub: `OmarElbasel/Wolf-Car`، وGitHub بيحوّله لـ `Wolf-Groups/Wolf-Car`، يعني نفس الريبو (اتأكدنا 2026-11-05).
+- [ ] قبل الرفع على طول: `deploy/preflight-2026-11.sh` على السيرفر. بيراجع الإعدادات، ويجرّب تحديث قاعدة البيانات
+      على البيانات الحقيقية ويرجّعه (مفيش حاجة بتتغير)، وبعدين ياخد النسخة الاحتياطية: التحديث بيغيّر جدول العملاء
+      ومينفعش يترجع إلا بيها.
 - [ ] دمج `main` في `production`، والسيرفر بيتحدّث لوحده.
 
 ### ٣. بعد الرفع: نجرّب على الموقع الحقيقي (القسم 4)
@@ -65,10 +68,13 @@ Branch `feat/email-guest-checkout`, merged into `main` on 2026-11-05 (spec:
 - No SMS. Sign-in codes, order emails and staff alerts go by email through **Brevo**.
 - Guests buy without an account (name, Qatari mobile for calls only, email); **pay by card** (Tap) or **pay at the branch**.
 - Thank-you page; "My account" signs in by email code; guest orders show up there under the same email.
-- Dashboard orders page opens on **website orders**; showroom orders are a second tab.
+- Dashboard orders page has a **website orders** tab and a **showroom orders** tab. The call center, Finance, the
+  admins and Bin Omran (the branch that holds website orders) open on website orders; every other branch opens on its
+  showroom's, and the overview's "Pending orders" counts that same tab (fixed 2026-11-07, branch `fix/predeploy-review`).
 - The **call center** (role Reservations) gets the new permission `order.web.handle`: it reads every order and
   confirms, cancels and hands over website orders. Granted by itself on the first start of the new API.
-- Showroom kiosk grid: 2 cards per row on phones, ~6 per row on the big screen.
+- Showroom kiosk grid: 2 cards per row on phones, ~6 per row on the big screen. At a branch that scans barcodes off
+  the screen the cards stay wide enough (340px or more) for a whole barcode, which a narrower card would cut.
 - Landing page: **WolfOS** (our app for the BYD Leopard's screens, wolfcaros.com). A lit "تطبيقنا" button in the
   header (on phones too, and first in the menu) and a dark section under the hero; both open wolfcaros.com in a new
   tab. The header's page links now show from 1280px wide (below that they are in the menu). Dashboard → visitor
@@ -104,6 +110,8 @@ Branch `feat/email-guest-checkout`, merged into `main` on 2026-11-05 (spec:
 ## 2. Owner: server settings — `/opt/wolfcar/app/deploy/api.prod.env`
 
 Safe to add before the new code is deployed (the running version ignores them). Template: `deploy/api.prod.env.example`.
+`deploy/email-env.sh` sets all of the lines below from three questions (the key is typed hidden), checks the key and
+the IP allowlist with Brevo from the server, and keeps a copy of the file: the commands are at its top.
 
 - [ ] `EMAIL_PROVIDER=brevo`
 - [ ] `BREVO_API_KEY=<the new key>`
@@ -119,13 +127,46 @@ Safe to add before the new code is deployed (the running version ignores them). 
 
 ## 3. Deploy
 
-- [ ] Check which GitHub repo the server pulls: `git -C /opt/wolfcar/app remote -v`. `deploy/server-setup.sh` clones
-      `OmarElbasel/Wolf-Car`, this laptop's `origin` is `Wolf-Groups/Wolf-Car`: the branch must reach the one the server uses.
+- [x] Check which GitHub repo the server pulls (checked 2026-11-05): `OmarElbasel/Wolf-Car`, which GitHub redirects
+      to `Wolf-Groups/Wolf-Car`, so they are the same repo.
 - [x] `feat/email-guest-checkout` merged into `main` on 2026-11-05 and pushed to both `origin` (Wolf-Groups) and
       `fork` (OmarElbasel). Pushing `main` deploys nothing.
 - [ ] Merge `main` into `production`. Pushing `production` runs `.github/workflows/deploy.yml` → `scripts/deploy.sh`
       on the server.
-- [ ] Before that push, take a database backup on the server: `/opt/wolfcar/app/scripts/backup.sh` (the migration cannot be undone).
+- [ ] Right before that push, run `deploy/preflight-2026-11.sh` on the server (commands at its top). It checks the
+      settings above, that no failed migration is recorded, tries this deploy's two migrations on the live data in a
+      transaction it rolls back, and then takes the database backup (`scripts/backup.sh`; the migration cannot be
+      undone without it). The deploy runs the server's old `deploy.sh`, which does not roll back an API that never
+      gets healthy, so this check is what stands between a bad setting and a site that is down.
+
+### If the deploy leaves the site down
+
+The server's old `deploy.sh` runs this deploy: if the new API never gets healthy, the GitHub job hangs up to 30 minutes
+and nothing rolls back. The old version starts on the migrated database (only its sign-in by phone code, which never
+reached customers without SMS, stays broken), so going back to it needs no restore. On the
+server as root in `/opt/wolfcar/app`:
+
+```
+docker tag wolfcar-api:previous wolfcar-api:latest && docker tag wolfcar-web:previous wolfcar-web:latest
+docker compose -f compose.prod.yml --env-file deploy/prod.env up -d --no-build
+```
+
+Then send `docker compose -f compose.prod.yml --env-file deploy/prod.env logs --tail 100 api` to Claude.
+
+### Undoing this deploy (only if it has to go back)
+
+The new API changes the customers table, so the old version comes back with the backup, in this order, on the server
+as root in `/opt/wolfcar/app`:
+
+1. `docker tag wolfcar-api:previous wolfcar-api:latest && docker tag wolfcar-web:previous wolfcar-web:latest`
+   (otherwise the new API starts after the restore and migrates the restored data again).
+2. `scripts/restore.sh /var/backups/wolfcar/db-<the stamp taken before the deploy>.dump`. It replaces the whole
+   database in one transaction (a failure leaves it as it was) and starts the old version. Orders placed since the
+   deploy are lost with it: note them first in Dashboard → Orders.
+3. Reset `production` on GitHub to the old commit (`48732cb`), or the next push deploys the new version again.
+
+`scripts/deploy.sh` rolls back by itself when the new version is not healthy, but a deploy runs the `deploy.sh` that
+was on the server before its `git pull`: the time limit on `up` (added 2026-11-05) protects the deploys after this one.
 
 ## 4. After the deploy: checks (on the live site)
 
@@ -135,7 +176,9 @@ Safe to add before the new code is deployed (the running version ignores them). 
        alert at `SHOP_NOTIFY_EMAIL`.
 3. [ ] Sign in as a call center user → Orders → *Website orders* shows it → Confirm. Then as the Bin Omran cashier →
        Mark collected. Then cancel your test orders.
-4. [ ] Showroom page on a phone (2 per row) and on the big screen. Landing page on a phone: "تطبيقنا" in the
+4. [ ] Showroom page on a phone (2 per row) and on the big screen; at Al Gharrafa the cashier scans a product's
+       barcode straight off a card, as every day. A Gharrafa cashier's Orders page opens on showroom orders.
+       Landing page on a phone: "تطبيقنا" in the
        header and the WolfOS section open wolfcaros.com; the press shows in Dashboard → visitor statistics.
 5. [ ] Headers: `curl -sI https://wolfcar.qa/ar` shows `strict-transport-security` and no `x-powered-by`.
 6. [ ] Logs if anything is off: `cd /opt/wolfcar/app && docker compose -f compose.prod.yml logs api --since 15m | grep -iE "email|brevo|sign-in|error"`.
