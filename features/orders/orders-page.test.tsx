@@ -16,10 +16,17 @@ const branch = { id: "b-gh", code: "GH", name: "Al Gharrafa Branch", nameAr: "ف
 
 describe("orders page for the call center", () => {
   it("opens on the website's orders of every branch, with the branch column", async () => {
-    server.use(http.get("/api/orders", () => HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 20 })));
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/orders", ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 20 });
+      }),
+    );
     renderWithApp(<OrdersPage />, { user: makeUser({ role: "RESERVATIONS", branch: null, permissions: ["booking.ppf.read", "order.web.handle"] }) });
     expect(await screen.findByText("Website orders of every branch: call the customer, confirm, and follow them to the hand-over. Showroom orders have their own tab.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(requests[0].get("source")).toBe("WEB");
   });
 });
 
@@ -200,7 +207,8 @@ describe("orders: filters", () => {
     );
     const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
     await screen.findByRole("button", { name: "Open order GH-000042" });
-    expect(requests.at(-1)?.toString()).toBe("source=WEB&page=1&pageSize=20");
+    // Al Gharrafa holds no website orders: it opens on its showroom's
+    expect(requests.at(-1)?.toString()).toBe("source=SHOWROOM&page=1&pageSize=20");
 
     await user.click(screen.getByRole("button", { name: "Pending" }));
     await waitFor(() => expect(requests.at(-1)?.get("status")).toBe("PENDING"));
@@ -215,7 +223,7 @@ describe("orders: filters", () => {
     expect(window.location.search).toBe("?status=PENDING&customerName=Sara&orderNumber=42");
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=WEB&page=1&pageSize=20"));
+    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=SHOWROOM&page=1&pageSize=20"));
     expect(screen.getByLabelText("Customer name")).toHaveValue("");
     expect(window.location.search).toBe("");
   });
@@ -223,6 +231,7 @@ describe("orders: filters", () => {
 
 describe("orders: web orders", () => {
   const boBranch = { id: "b-bo", code: "BO", name: "Bin Omran Branch", nameAr: "فرع بن عمران" };
+  const boCashier = () => makeUser({ username: "bo.cashier", displayName: "BO Cashier", role: "CASHIER", branch: boBranch, branchHoldsWebOrders: true, permissions: CASHIER });
   const systemWeb = { id: "00000000-0000-4000-8000-0000000000d1", username: "system.web", displayName: "Website orders" };
   const web = (code: string, overrides: Partial<OrderDetail> = {}) =>
     makeOrder({
@@ -279,13 +288,19 @@ describe("orders: web orders", () => {
     expect(within(row("BO-000011")).queryByText("Awaiting payment")).not.toBeInTheDocument();
   });
 
-  it("tells branch staff the list is the website's orders, with the showroom's on their own tab", async () => {
+  it("tells the web-orders branch the list is the website's orders, with the showroom's on their own tab", async () => {
     server.use(http.get("/api/orders", () => HttpResponse.json(page(makeOrder()))));
-    renderWithApp(<OrdersPage />, { user: cashier() });
+    renderWithApp(<OrdersPage />, { user: boCashier() });
     expect(await screen.findByText("Website orders for your branch: call, prepare and hand them over. Showroom orders have their own tab.")).toBeInTheDocument();
   });
 
-  it("opens on the website's orders, and keeps the showroom's on a second tab, in the URL", async () => {
+  it("tells any other branch the list is its showroom's orders, with the website's on their own tab", async () => {
+    server.use(http.get("/api/orders", () => HttpResponse.json(page(makeOrder()))));
+    renderWithApp(<OrdersPage />, { user: cashier() });
+    expect(await screen.findByText("Showroom orders for your branch. Website orders have their own tab.")).toBeInTheDocument();
+  });
+
+  it("opens the web-orders branch on the website's orders, and keeps a picked tab in the URL", async () => {
     const requests: URLSearchParams[] = [];
     server.use(
       http.get("/api/orders", ({ request }) => {
@@ -293,7 +308,7 @@ describe("orders: web orders", () => {
         return HttpResponse.json(page(web("BO-000007", { paymentStatus: "PENDING" })));
       }),
     );
-    const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
+    const { user } = renderWithApp(<OrdersPage />, { user: boCashier() });
     await screen.findByRole("button", { name: "Open order BO-000007" });
     expect(requests.at(-1)?.get("source")).toBe("WEB");
 
@@ -307,11 +322,32 @@ describe("orders: web orders", () => {
 
     await user.click(within(tabs).getByRole("button", { name: "Website orders" }));
     await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("WEB"));
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?source=WEB");
+  });
+
+  it("opens any other branch on its showroom's orders, and a picked website tab does not jump back", async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/orders", ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json(page(makeOrder()));
+      }),
+    );
+    const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
+    await screen.findByRole("button", { name: "Open order GH-000042" });
+    expect(requests[0].get("source")).toBe("SHOWROOM");
+
+    const tabs = screen.getByRole("group", { name: "Orders" });
+    expect(within(tabs).getByRole("button", { name: "Showroom orders" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(tabs).getByRole("button", { name: "Website orders" }));
+    await waitFor(() => expect(requests.at(-1)?.get("source")).toBe("WEB"));
+    expect(window.location.search).toBe("?source=WEB");
+    expect(within(tabs).getByRole("button", { name: "Website orders" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("keeps the tab when the filters are cleared", async () => {
-    window.history.replaceState(null, "", "/en/dashboard/orders?source=SHOWROOM&status=PENDING");
+    // the website tab is not Al Gharrafa's default
+    window.history.replaceState(null, "", "/en/dashboard/orders?source=WEB&status=PENDING");
     const requests: URLSearchParams[] = [];
     server.use(
       http.get("/api/orders", ({ request }) => {
@@ -322,11 +358,11 @@ describe("orders: web orders", () => {
     const { user } = renderWithApp(<OrdersPage />, { user: cashier() });
     await screen.findByRole("button", { name: "Open order GH-000042" });
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=SHOWROOM&page=1&pageSize=20"));
-    expect(window.location.search).toBe("?source=SHOWROOM");
+    await waitFor(() => expect(requests.at(-1)?.toString()).toBe("source=WEB&page=1&pageSize=20"));
+    expect(window.location.search).toBe("?source=WEB");
   });
 
-  it.each(["WEB", ""])("opens ?source=%s on the website's orders", async (source) => {
+  it.each(["WEB", ""])("opens ?source=%s on the website's orders at the web-orders branch", async (source) => {
     window.history.replaceState(null, "", `/en/dashboard/orders${source ? `?source=${source}` : ""}`);
     const requests: URLSearchParams[] = [];
     server.use(
@@ -335,7 +371,7 @@ describe("orders: web orders", () => {
         return HttpResponse.json(page(web("BO-000007", { paymentStatus: "PENDING" })));
       }),
     );
-    renderWithApp(<OrdersPage />, { user: cashier() });
+    renderWithApp(<OrdersPage />, { user: boCashier() });
     await screen.findByRole("button", { name: "Open order BO-000007" });
     expect(requests[0].get("source")).toBe("WEB");
     expect(within(screen.getByRole("group", { name: "Orders" })).getByRole("button", { name: "Website orders" })).toHaveAttribute("aria-pressed", "true");

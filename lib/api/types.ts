@@ -22,6 +22,8 @@ export interface Profile {
   email: string | null;
   role: RoleName;
   branch: BranchSummary | null;
+  /** the user's branch is the one that holds website orders (the API's WEB_ORDERS_BRANCH_CODE) */
+  branchHoldsWebOrders: boolean;
   twoFactorEnabled: boolean;
   hasShowroomPassword: boolean;
   permissions: PermissionKey[];

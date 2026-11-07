@@ -1,4 +1,5 @@
 import { act, screen, waitFor } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cart } from "@/features/catalog/cart";
@@ -52,7 +53,11 @@ beforeEach(() => {
     cart.add(CART_PRODUCTS[1]);
   });
 });
-afterEach(() => act(() => cart.clear()));
+afterEach(() => {
+  act(() => cart.clear());
+  // the tab remembers the key of an attempt that went unanswered
+  sessionStorage.clear();
+});
 
 describe("checkout: details step", () => {
   it("is filled in from what is known and shows the basket", () => {
@@ -232,6 +237,95 @@ describe("checkout: details step", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Online payment isn't available right now. Order on WhatsApp instead.");
     expect(onCreated).not.toHaveBeenCalled();
     expect(storedCart().map((l) => l.id)).toEqual(["p-cam", "p-mats"]);
+  });
+});
+
+describe("checkout: details step, pressing again", () => {
+  const created = () => HttpResponse.json({ ...webOrder(), replayed: false, key: ORDER_KEY }, { status: 201 });
+  /** The answers in turn, the last one again for any press after. */
+  const inTurn = (...answers: (() => Response)[]) => {
+    let n = 0;
+    return () => answers[Math.min(n++, answers.length - 1)]();
+  };
+  /** Presses Continue and waits until that attempt is over (the button is back). */
+  async function press(user: UserEvent, sent: Sent[]) {
+    const before = sent.length;
+    await user.click(screen.getByRole("button", { name: "Continue to payment" }));
+    await waitFor(() => expect(sent).toHaveLength(before + 1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to payment" })).toBeEnabled());
+  }
+
+  it.each([
+    ["offline", () => HttpResponse.error()],
+    ["a 5xx", () => apiError(502, "BAD_GATEWAY")],
+    ["turned away by the rate limit", () => apiError(429, "TOO_MANY_REQUESTS")],
+  ])("sends the same Idempotency-Key again after no answer (%s): the API hands back an order it may have placed", async (_label, unanswered) => {
+    const sent = listenForOrders(inTurn(unanswered, unanswered, created));
+    const onCreated = vi.fn();
+    const { user } = renderOnSite(<DetailsStep {...props({ onCreated })} />);
+    await press(user, sent);
+    await press(user, sent);
+    await press(user, sent);
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(sent[0].key).toMatch(/^[0-9a-f-]{32,36}$/i);
+    expect(sent.map((s) => s.key)).toEqual([sent[0].key, sent[0].key, sent[0].key]);
+  });
+
+  it("sends the same Idempotency-Key after a reload of the page", async () => {
+    const sent = listenForOrders(inTurn(() => HttpResponse.error(), created));
+    const first = renderOnSite(<DetailsStep {...props()} />);
+    await press(first.user, sent);
+    first.unmount();
+
+    const { user } = renderOnSite(<DetailsStep {...props()} />);
+    await press(user, sent);
+    expect(sent[1].key).toBe(sent[0].key);
+  });
+
+  it("takes a new Idempotency-Key when the unanswered press is over half an hour old: that order is long gone", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const sent = listenForOrders(inTurn(() => HttpResponse.error(), created));
+    const { user } = renderOnSite(<DetailsStep {...props()} />);
+    await press(user, sent);
+    now.mockReturnValue(1_800_000_000_000 + 31 * 60_000);
+    await press(user, sent);
+    now.mockRestore();
+    expect(sent[1].key).not.toBe(sent[0].key);
+  });
+
+  it.each([
+    [409, "TOO_MANY_OPEN_ORDERS"],
+    [400, "VALIDATION_FAILED"],
+  ])("takes a new Idempotency-Key after a refusal (%i %s)", async (status, code) => {
+    const sent = listenForOrders(inTurn(() => apiError(status, code), created));
+    const { user } = renderOnSite(<DetailsStep {...props()} />);
+    await press(user, sent);
+    await press(user, sent);
+    expect(sent[1].key).not.toBe(sent[0].key);
+  });
+
+  it("takes a new Idempotency-Key once an order was placed", async () => {
+    const sent = listenForOrders(created);
+    const { user } = renderOnSite(<DetailsStep {...props()} />);
+    await press(user, sent);
+    await press(user, sent);
+    expect(sent[1].key).not.toBe(sent[0].key);
+  });
+
+  it.each([
+    ["the email", async (user: UserEvent) => {
+      await user.clear(screen.getByLabelText("Email"));
+      await user.type(screen.getByLabelText("Email"), "sara.k@example.qa");
+    }],
+    ["the basket", async () => act(() => cart.add(CART_PRODUCTS[1]))],
+  ])("takes a new Idempotency-Key when %s changed after no answer: it is another order", async (_label, change) => {
+    const sent = listenForOrders(inTurn(() => apiError(502, "BAD_GATEWAY"), created));
+    const { user } = renderOnSite(<DetailsStep {...props()} />);
+    await press(user, sent);
+    await change(user);
+    await press(user, sent);
+    expect(sent[1].body).not.toEqual(sent[0].body);
+    expect(sent[1].key).not.toBe(sent[0].key);
   });
 });
 

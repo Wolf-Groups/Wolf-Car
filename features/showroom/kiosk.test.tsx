@@ -340,6 +340,26 @@ describe("showroom kiosk", () => {
       expect(within(panel()).getByText("Brake pads")).toBeInTheDocument();
       expect(within(panel()).getByText("BP-100")).toBeInTheDocument();
     });
+
+    it("gives each card room for a whole barcode, where the other branches fit two across a phone", async () => {
+      // a 13-digit code is 277px wide: on a ~200px card both ends are cut and nothing scans
+      const grid = () => screen.getByRole("list", { name: "Showroom" });
+      // the photo's sizes hint follows the card width, so the browser picks the right rendition
+      const photo = () => screen.getByRole("button", { name: "View Brake pads larger" }).querySelector("img");
+      server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog())));
+      const plain = renderKiosk();
+      await screen.findByRole("heading", { name: "Brake pads" });
+      expect(grid()).toHaveClass("grid-cols-2", "sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]");
+      expect(photo()).toHaveAttribute("sizes", "(min-width: 640px) 260px, 50vw");
+      plain.unmount();
+
+      server.use(http.get("/api/showroom/products", () => HttpResponse.json(scanCatalog())));
+      renderKiosk();
+      await screen.findByRole("heading", { name: "Brake pads" });
+      expect(grid()).toHaveClass("grid-cols-1", "sm:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]");
+      expect(grid()).not.toHaveClass("grid-cols-2");
+      expect(photo()).toHaveAttribute("sizes", "(min-width: 768px) 480px, 100vw");
+    });
   });
 
   it("keeps a filtered-out product in the cart", async () => {

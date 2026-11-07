@@ -59,9 +59,12 @@ export class OrderEmailsService {
     }
   }
 
-  /** The return page, which shows the order to whoever holds its key. */
+  /**
+   * The return page, which shows the order to whoever holds its key. `from=email`: opened from here (days later,
+   * over a new basket) it neither empties the basket nor counts the sale again, as the checkout's own arrival does.
+   */
   private orderLink(orderId: string, locale: 'ar' | 'en'): string | null {
-    return this.webLink(`/${locale}/checkout/return?order=${orderId}&key=${orderKey(orderId, this.config.get('JWT_ACCESS_SECRET', { infer: true }))}`);
+    return this.webLink(`/${locale}/checkout/return?order=${orderId}&key=${orderKey(orderId, this.config.get('JWT_ACCESS_SECRET', { infer: true }))}&from=email`);
   }
 
   /** WEB_PUBLIC_URL + path, or null when the website's address is not configured. */

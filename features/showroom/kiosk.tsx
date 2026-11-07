@@ -52,6 +52,12 @@ const HEADER_H = "76px";
  * the basket on the showroom's big screen), so a car model's parts are seen at a glance.
  */
 const GRID = "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))] sm:gap-4 2xl:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]";
+/**
+ * Where the cashier scans off the screen, each card holds a whole barcode (a 13-digit code is 277px; a cut end
+ * does not scan): one card across a phone, from a tablet up cards of 340px or more, which leave 288px for the
+ * bars inside the card's padding and the barcode button's.
+ */
+const SCAN_GRID = "grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(340px,1fr))] sm:gap-4";
 /** Cards added each time the list nears its end; a car model can hold 150+ products. */
 const PAGE = 24;
 
@@ -68,10 +74,10 @@ function KioskSplash() {
   );
 }
 
-function ProductGridSkeleton() {
+function ProductGridSkeleton({ scan }: { scan: boolean }) {
   const t = useTranslations("Common");
   return (
-    <div role="status" aria-live="polite" className={GRID}>
+    <div role="status" aria-live="polite" className={scan ? SCAN_GRID : GRID}>
       <span className="sr-only">{t("loading")}</span>
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="overflow-hidden rounded-[var(--radius-brand-lg)] border border-line bg-surface">
@@ -269,7 +275,7 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
         <main className={cn("min-w-0 px-4 pt-5 pb-36 lg:px-6", !scan && "lg:landscape:pb-8")}>
           <h1 className="sr-only">{branchName ? `${t("title")} · ${branchName}` : t("title")}</h1>
           {catalog.isPending ? (
-            <ProductGridSkeleton />
+            <ProductGridSkeleton scan={scan} />
           ) : catalog.isError && !catalog.data ? (
             <ErrorState error={catalog.error} onRetry={() => void catalog.refetch()} />
           ) : orderable.length === 0 ? (
@@ -330,7 +336,7 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
                     )
                   ) : (
                     <>
-                      <ul className={GRID} aria-label={t("title")}>
+                      <ul className={scan ? SCAN_GRID : GRID} aria-label={t("title")}>
                         {groups.slice(0, shown).map((group) => (
                           <li key={group.key} className="grid">
                             <ProductGroupCard group={group} scan={scan} quantityOf={(id) => quantityOf(cart, id)} onAdd={handleAdd} />

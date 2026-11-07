@@ -24,6 +24,7 @@ import { fast } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { ORDER_STATUSES } from "@/shared/permissions";
 import { DebouncedInput } from "./debounced-input";
+import { defaultSource } from "./default-source";
 import { OrderDetailSheet } from "./order-detail-sheet";
 import { EMPTY_STATE, fetchOrders, hasFilters, type OrderFilters, orderKeys, PAGE_SIZE } from "./queries";
 import { useOrdersUrlState } from "./use-url-state";
@@ -201,13 +202,14 @@ export function OrdersPage() {
 function OrdersManager() {
   const t = useTranslations("Orders");
   const tc = useTranslations("Common");
-  const { can } = useAuth();
+  const { user, can } = useAuth();
   const [state, update] = useOrdersUrlState();
   // the call center (order.web.handle) reads every branch's orders, as order.read.all does
   const handlesWeb = can("order.web.handle");
   const readsAll = can("order.read.all") || handlesWeb;
-  // the website's orders are the work; the showroom's are kept on their own tab (?source=SHOWROOM)
-  const tab: OrderSourceName = state.source === "SHOWROOM" ? "SHOWROOM" : "WEB";
+  // without ?source= the page opens on the user's own tab: a branch that holds no website orders opens on its showroom's
+  const defaultTab = defaultSource(user);
+  const tab: OrderSourceName = state.source || defaultTab;
 
   const filters = useMemo<OrderFilters>(
     () => ({
@@ -246,7 +248,9 @@ function OrdersManager() {
     ? can("order.update") || can("order.confirm") || can("order.cancel")
       ? t("subtitleAdmin")
       : t("subtitleAll")
-    : t("subtitleBranch");
+    : defaultTab === "WEB"
+    ? t("subtitleBranch")
+    : t("subtitleShowroom");
 
   const statusOptions: { value: OrderStatusName | "ALL"; label: string }[] = [
     { value: "ALL", label: tc("all") },
@@ -289,8 +293,8 @@ function OrdersManager() {
         label={t("tabsLabel")}
         value={tab}
         options={tabOptions}
-        // the website tab is the page's default: it leaves no ?source= behind
-        onChange={(v) => update({ source: v === "WEB" ? "" : v, status: "", page: 1, open: null })}
+        // a picked tab stays in the URL, so it never falls back to the user's own
+        onChange={(v) => update({ source: v, status: "", page: 1, open: null })}
         className="mb-4"
       />
 

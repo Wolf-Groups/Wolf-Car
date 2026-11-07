@@ -57,7 +57,7 @@ const MATRIX: Record<string, Caller[] | { public: number }> = {
 
   'GET /api/branches': ['admin'],
   'POST /api/branches': ['admin'],
-  'GET /api/branches/options': ['admin', 'finance', 'manager'],
+  'GET /api/branches/options': ['admin', 'finance', 'manager', 'reservations'],
   'GET /api/branches/:id': ['admin'],
   'PATCH /api/branches/:id': ['admin'],
   'PUT /api/branches/:id/showroom-pin': ['admin'],

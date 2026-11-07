@@ -92,6 +92,9 @@ export function ReturnStatus({ orderId, orderKey = null }: ReturnStatusProps) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polls = 0;
     let seen = false;
+    // the order email's "View your order" (?from=email, set by the API) opens this page again days later, over a
+    // new basket: only the checkout's own arrival (its redirect, or Tap's) empties the basket and counts the sale
+    const fromEmail = new URLSearchParams(window.location.search).get("from") === "email";
 
     const next = () => {
       if (polls >= MAX_POLLS) setView(seen ? "waiting" : "error");
@@ -106,11 +109,11 @@ export function ReturnStatus({ orderId, orderKey = null }: ReturnStatusProps) {
       if (outcome === null) return next();
       // the money was taken, or the order is placed at the branch: its products are bought, but only a paid order
       // counts as a sale. Only those leave the basket: unpriced lines (for WhatsApp) and anything added since stay
-      if ((outcome === "paid" || outcome === "review" || outcome === "placed") && !basketCleared.current) {
+      if (!fromEmail && (outcome === "paid" || outcome === "review" || outcome === "placed") && !basketCleared.current) {
         basketCleared.current = true;
         if (firstTimeInTab("basket", o.id)) o.items.forEach((item) => cart.setQty(item.productId, 0));
       }
-      if ((outcome === "paid" || outcome === "placed") && !saleReported.current) {
+      if (!fromEmail && (outcome === "paid" || outcome === "placed") && !saleReported.current) {
         saleReported.current = true;
         if (firstTimeInTab(outcome, o.id)) track(outcome === "paid" ? "order_paid" : "order_placed");
       }

@@ -52,7 +52,10 @@ describe('OrderEmailsService', () => {
     const [customer, staff] = sent();
     expect(customer.to).toEqual(['sara@example.com']);
     expect(customer.html).toContain('dir="rtl"');
-    expect(customer.html).toContain(`https://wolfcar.qa/ar/checkout/return?order=o-1&amp;key=${orderKey('o-1', SECRET)}`);
+    // marked as the email's (from=email): opened again later, the page neither empties the basket nor counts the sale again
+    const link = `https://wolfcar.qa/ar/checkout/return?order=o-1&key=${orderKey('o-1', SECRET)}&from=email`;
+    expect(customer.html).toContain(`href="${link.replace(/&/g, '&amp;')}"`);
+    expect(customer.text).toContain(link);
     expect(staff.to).toEqual(['shop@wolfcar.qa', 'manager@wolfcar.qa']);
     expect(staff.subject).toContain('BO-000124');
     expect(staff.html).toContain('https://wolfcar.qa/ar/dashboard/orders');
@@ -63,6 +66,7 @@ describe('OrderEmailsService', () => {
     await new OrderEmailsService(prisma, configWith(), mailer).paid('o-1');
     const [customer, staff] = sent();
     expect(customer.subject).toMatch(/Receipt/);
+    expect(customer.text).toContain(`https://wolfcar.qa/en/checkout/return?order=o-1&key=${orderKey('o-1', SECRET)}&from=email`);
     expect(staff.subject).toMatch(/paid by card/i);
   });
 
