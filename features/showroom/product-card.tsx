@@ -17,6 +17,8 @@ import { ScanBarcode } from "./scan-barcode";
 
 /** Card widths (kiosk GRID: half a phone, ~200–260px from a tablet up) → which image the browser should pick (480px thumb vs 1200px). */
 export const PRODUCT_IMAGE_SIZES = "(min-width: 640px) 260px, 50vw";
+/** The same where the cashier scans off the screen (kiosk SCAN_GRID): one card across up to a small tablet, ~340–480px from two across. */
+export const SCAN_IMAGE_SIZES = "(min-width: 768px) 480px, 100vw";
 
 export function ProductImage({ product, sizes, className }: { product: ShowroomProduct; sizes: string; className?: string }) {
   return (
@@ -45,6 +47,7 @@ export function ProductCard({
   title = product.name,
   picker,
   barcode,
+  imageSizes = PRODUCT_IMAGE_SIZES,
   quantity,
   onAdd,
 }: {
@@ -54,6 +57,7 @@ export function ProductCard({
   picker?: ReactNode;
   /** only at a branch whose cashier scans off the screen */
   barcode?: ReactNode;
+  imageSizes?: string;
   quantity: number;
   /** returns false when the cart limits stopped the add */
   onAdd: () => boolean;
@@ -94,7 +98,7 @@ export function ProductCard({
           open={zoomed}
           onOpenChange={setZoomed}
         >
-          <ProductImage product={product} sizes={PRODUCT_IMAGE_SIZES} className={cn("absolute inset-0 p-2 sm:p-3", !available && "opacity-50")} />
+          <ProductImage product={product} sizes={imageSizes} className={cn("absolute inset-0 p-2 sm:p-3", !available && "opacity-50")} />
         </ImageZoom>
         {/* over the photo, so a product with colours is as tall as its neighbours */}
         {picker && <div className="absolute inset-x-2 bottom-2 flex justify-center">{picker}</div>}
@@ -188,6 +192,7 @@ export function ProductGroupCard({
       quantity={quantityOf(product.id)}
       onAdd={() => onAdd(product)}
       barcode={scan && product.barcode ? <ScanBarcode key={product.id} product={product} /> : undefined}
+      imageSizes={scan ? SCAN_IMAGE_SIZES : PRODUCT_IMAGE_SIZES}
       picker={
         group.variants.length > 1 ? (
           <VariantPicker variants={group.variants} selected={product.id} onSelect={setPicked} label={t("variant")} touch compact />
