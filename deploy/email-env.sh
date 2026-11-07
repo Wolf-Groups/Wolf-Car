@@ -39,7 +39,8 @@ notify=$(tr -d ' ' <<<"$notify")
 echo
 echo "Brevo from this server:"
 body=$(mktemp)
-code=$(curl -sS -o "$body" -w '%{http_code}' --max-time 20 https://api.brevo.com/v3/account -H "api-key: $key") || code=000
+# over IPv4, as the API container sends (Docker gives it no IPv6): the host's own IPv6 is not on Brevo's list
+code=$(curl -4 -sS -o "$body" -w '%{http_code}' --max-time 20 https://api.brevo.com/v3/account -H "api-key: $key") || code=000
 if [[ "$code" == 200 ]]; then
   echo "  OK (200): the key works and this server's IP is allowed"
 else
