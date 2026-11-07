@@ -43,6 +43,7 @@ afterEach(() => {
   act(() => cart.clear());
   // the page remembers per tab which orders it already reported paid
   sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("checkout return page", () => {
@@ -301,6 +302,35 @@ describe("checkout return page", () => {
     expect(await screen.findByText("BO-000001")).toBeInTheDocument();
     expect(storedCart()).toHaveLength(1);
     expect(tracked().filter((t) => t === "order_paid")).toHaveLength(1);
+  });
+
+  // the order email's "View your order" opens this page in a new tab, days later, over a new basket
+  it.each([
+    ["a paid order", paidOrder(), "Payment received"],
+    ["an order to pay at the branch", branchOrder(), "Your order is placed"],
+  ])("shows %s opened from its email (?from=email), but neither empties the basket nor counts the sale", async (_label, order, state) => {
+    window.history.replaceState(null, "", `/checkout/return?order=${ORDER_ID}&key=${ORDER_KEY}&from=email`);
+    listen({ reconcile: () => json(order) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByRole("heading", { name: "Thank you, Sara!" })).toBeInTheDocument();
+    expect(screen.getByText(state)).toBeInTheDocument();
+    expect(screen.getByText("BO-000001")).toBeInTheDocument();
+    await tick(CHECKOUT_POLL_MS);
+    expect(storedCart()).toHaveLength(1);
+    expect(tracked().filter((e) => e.startsWith("order_"))).toEqual([]);
+  });
+
+  it.each([
+    ["paid", paidOrder(), "order_paid"],
+    ["to pay at the branch", branchOrder(), "order_placed"],
+  ])("still empties the basket and counts the sale when the checkout itself lands here (%s)", async (_label, order, event) => {
+    // the checkout's own address, and Tap's redirect: ?order=&key= without the email's mark
+    window.history.replaceState(null, "", `/checkout/return?order=${ORDER_ID}&key=${ORDER_KEY}`);
+    listen({ reconcile: () => json(order) });
+    renderOnSite(<ReturnStatus orderId={ORDER_ID} orderKey={ORDER_KEY} />);
+    expect(await screen.findByText("BO-000001")).toBeInTheDocument();
+    await waitFor(() => expect(storedCart()).toEqual([]));
+    expect(tracked().filter((e) => e.startsWith("order_"))).toEqual([event]);
   });
 
   it.each([

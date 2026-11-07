@@ -18,7 +18,8 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
 /**
  * The thank-you page of an order: where Tap sends the customer back after
  * 3-D Secure, where an order to pay at the branch lands, and where the order
- * emails link to (?order=<uuid>&key=<key>; the key opens a guest's order). The
+ * emails link to (?order=<uuid>&key=<key>&from=email; the key opens a guest's
+ * order, and from=email keeps the basket and the sales count as they are). The
  * redirect proves nothing: the page asks the API to reconcile with Tap and
  * shows what the server says. Never framed nor indexed (next.config.ts headers).
  */

@@ -23,7 +23,7 @@ import { CUSTOMER_EMAIL_MAX, EMAIL_PATTERN, normaliseQatarPhone, type PaymentMet
 import { CUSTOMER_NAME_MAX, CUSTOMER_NAME_MIN, CUSTOMER_NAME_PATTERN } from "@/shared/validation";
 import type { ContactDetails } from "./checkout-state";
 import { OrderLines } from "./order-lines";
-import { shop } from "./shop-api";
+import { type CreateOrderBody, shop } from "./shop-api";
 import { loadTapSdk } from "./tap-sdk";
 import { useCheckoutError } from "./use-checkout-error";
 
@@ -75,6 +75,42 @@ function basketSummary(lines: PricedLine[]): { items: WebOrderItem[]; total: str
   return { items, total: money(total) };
 }
 
+/** Where the tab keeps the last order sent without an answer, so a reload does not lose its key. */
+const UNANSWERED_KEY = "wolfcar.checkoutAttempt";
+/** Pressed again later than this, it is a new order: the API would hand back one long expired or cancelled. */
+const UNANSWERED_FOR_MS = 30 * 60_000;
+
+/**
+ * The Idempotency-Key to send this order with. One sent without an answer (offline, a timeout, a 5xx) may still
+ * have been placed: sent again unchanged, after a reload too, it keeps that key, and the API hands that order back
+ * instead of placing a second one. Anything changed in it is another order, with a new key.
+ */
+function attemptKey(body: CreateOrderBody): string {
+  const sent = JSON.stringify(body);
+  try {
+    const last = JSON.parse(window.sessionStorage.getItem(UNANSWERED_KEY) ?? "null") as { body: string; key: string; at: number } | null;
+    if (last?.body === sent && Date.now() - last.at < UNANSWERED_FOR_MS) return last.key;
+  } catch {
+    /* storage blocked or garbled: a new key */
+  }
+  const key = newIdempotencyKey();
+  try {
+    window.sessionStorage.setItem(UNANSWERED_KEY, JSON.stringify({ body: sent, key, at: Date.now() }));
+  } catch {
+    /* storage blocked: the next press is a new order, as before */
+  }
+  return key;
+}
+
+/** The API answered (the order, or a refusal): the next press is a new order. */
+function attemptAnswered(): void {
+  try {
+    window.sessionStorage.removeItem(UNANSWERED_KEY);
+  } catch {
+    /* storage blocked: nothing was kept */
+  }
+}
+
 /**
  * Step 1: name, mobile and email over the basket, and how to pay. A card order is created unpaid so the
  * server total is shown before the card; an order to pay at the branch is placed there and then. Only priced
@@ -118,8 +154,13 @@ export function DetailsStep({ contact, signedIn, cardEnabled, onCreated }: Detai
     try {
       // only ids and quantities: the server prices the order, never the browser
       const items = lines.map((l) => ({ productId: l.id, quantity: l.qty }));
-      onCreated(await shop.createOrder({ items, name, phone, email, paymentMethod: method, locale }, newIdempotencyKey()));
+      const body: CreateOrderBody = { items, name, phone, email, paymentMethod: method, locale };
+      const order = await shop.createOrder(body, attemptKey(body));
+      attemptAnswered();
+      onCreated(order);
     } catch (e) {
+      // a refusal is an answer; a 429 is not: the rate limit turned the order away before reading it
+      if (e instanceof ApiError && e.status < 500 && e.status !== 429) attemptAnswered();
       const removed = e instanceof ApiError && e.code === "PRODUCT_UNAVAILABLE" ? (e.productIds ?? []).filter((id) => lines.some((l) => l.id === id)) : [];
       if (removed.length > 0) {
         removed.forEach((id) => cart.setQty(id, 0));
