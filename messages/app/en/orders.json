@@ -1,6 +1,7 @@
 {
   "title": "Orders",
   "subtitleBranch": "Website orders for your branch: call, prepare and hand them over. Showroom orders have their own tab.",
+  "subtitleShowroom": "Showroom orders for your branch. Website orders have their own tab.",
   "subtitleAll": "Orders from every branch (read-only).",
   "searchCustomer": "Customer name",
   "searchNumber": "Order number",

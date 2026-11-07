@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePendingRequests } from "@/features/bookings/ppf/queries";
 import { useAuth } from "@/features/auth/auth-provider";
+import { defaultSource } from "@/features/orders/default-source";
 import { Link } from "@/i18n/navigation";
 import { api } from "@/lib/api/client";
 import type { ActivityEntry, BranchView, OrderSummary, Page, Product } from "@/lib/api/types";
@@ -45,8 +46,10 @@ export function Overview() {
   const seesPpf = can("booking.ppf.read");
   const waitingRequests = usePendingRequests(seesPpf);
 
-  // the website's orders are the work: a pending one waits for the branch's call (pay at the branch), or briefly for a card
-  const pending = useQuery({ queryKey: ["stats", "pending"], queryFn: () => count("/orders", { status: "PENDING", source: "WEB" }), enabled: readsOrders });
+  // the tab the orders page opens on: the website's at the branch that holds them (a pending one waits for its call,
+  // or briefly for a card), the showroom's at every other branch
+  const source = defaultSource(user);
+  const pending = useQuery({ queryKey: ["stats", "pending", source], queryFn: () => count("/orders", { status: "PENDING", source }), enabled: readsOrders });
   // the default list already leaves out web orders cancelled before any card was charged
   const ordersToday = useQuery({ queryKey: ["stats", "today", today], queryFn: () => count("/orders", { from: today, to: today }), enabled: readsOrders });
   const confirmedToday = useQuery({
@@ -77,7 +80,7 @@ export function Overview() {
       <PageHeader title={t("Dashboard.greeting", { name: user.displayName })} subtitle={t(`Dashboard.subtitle.${user.role}`)} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {readsOrders && <Stat label={t("Dashboard.pendingOrders")} value={pending.data} href="/dashboard/orders?status=PENDING" />}
+        {readsOrders && <Stat label={t("Dashboard.pendingOrders")} value={pending.data} href={`/dashboard/orders?status=PENDING&source=${source}`} />}
         {readsOrders && <Stat label={t("Dashboard.ordersToday")} value={ordersToday.data} href="/dashboard/orders" />}
         {readsOrders && <Stat label={t("Dashboard.confirmedToday")} value={confirmedToday.data} />}
         {seesPpf && <Stat label={t("Dashboard.waitingRequests")} value={waitingRequests} href="/dashboard/ppf-bookings" />}
