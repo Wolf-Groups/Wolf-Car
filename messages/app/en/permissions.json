@@ -44,7 +44,8 @@
     "permission_manage": "Manage permissions",
     "activity_read": "View the activity log",
     "analytics_read": "View website visitor statistics",
-    "showroom_password_view_or_change": "Change own showroom password"
+    "showroom_password_view_or_change": "Change own showroom password",
+    "order_web_handle": "Handle website orders (all branches)"
   },
   "noAccessTitle": "You can't open this page",
   "noAccessBody": "It needs the “{permission}” permission. Ask a Super Admin if you need access.",

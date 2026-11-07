@@ -19,6 +19,10 @@ export const SITE_EVENT_TYPES = [
   'checkout_start',
   /** the return page confirmed a paid order */
   'order_paid',
+  /** the thank-you page of an order placed to pay at the branch */
+  'order_placed',
+  /** a link to WolfOS (wolfcaros.com), our app for the BYD Leopard's screens; the label says where it sat */
+  'wolfos',
 ] as const;
 export type SiteEventType = (typeof SITE_EVENT_TYPES)[number];
 

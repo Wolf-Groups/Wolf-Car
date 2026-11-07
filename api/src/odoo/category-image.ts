@@ -1,10 +1,31 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import sharp from 'sharp';
+import { legacyCategoryKey } from './odoo-rows';
 
 const WIDTH = 1200;
 const HEIGHT = 800;
 /** the site's charcoal, so the tile sits naturally on the dark model banner */
 const CHARCOAL = '#161616';
 const ACCENT = '#c94a12';
+
+/**
+ * Where the repository keeps a photo or logo per category, named by
+ * legacyCategoryKey: `tank300.jpg` is the tab image itself, `thabt.png` a
+ * logo placed on a dark tile. Relative to the API's working directory, which
+ * is `api/` both in development and in the container.
+ */
+export const CATEGORY_IMAGES_DIR = path.resolve('prisma/category-images');
+const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'webp'] as const;
+const LOGO_EXTENSION = 'png';
+
+export interface CategoryImageFile {
+  /** a photo is used as it is; a logo goes on a tile */
+  kind: 'photo' | 'logo';
+  /** the file's name inside the folder */
+  file: string;
+  data: Buffer;
+}
 
 const escapeXml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -26,4 +47,44 @@ export async function categoryTile({ label, logo }: { label: string; logo?: Buff
   if (!logo) return tile.png().toBuffer();
   const fitted = await sharp(logo).resize({ width: 820, height: 480, fit: 'inside' }).png().toBuffer();
   return tile.composite([{ input: fitted, gravity: 'centre' }]).png().toBuffer();
+}
+
+/**
+ * The file the repository keeps for a category, found by the same key that
+ * matches an Odoo category to the old catalogue's car. A photo wins over a
+ * logo when both exist. Undefined when there is none, or no folder.
+ */
+export async function categoryImageFile(
+  name: string,
+  dir: string = CATEGORY_IMAGES_DIR,
+): Promise<CategoryImageFile | undefined> {
+  const key = legacyCategoryKey(name);
+  const candidates: [CategoryImageFile['kind'], string][] = [
+    ...PHOTO_EXTENSIONS.map((ext): [CategoryImageFile['kind'], string] => [
+      'photo',
+      `${key}.${ext}`,
+    ]),
+    ['logo', `${key}.${LOGO_EXTENSION}`],
+  ];
+  for (const [kind, file] of candidates) {
+    try {
+      return { kind, file, data: await readFile(path.join(dir, file)) };
+    } catch {
+      /* not this one */
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The image to store for a category's tab: its photo from the repository,
+ * else its logo on a dark tile, else a tile with its name.
+ */
+export async function categoryImage(
+  name: string,
+  dir: string = CATEGORY_IMAGES_DIR,
+): Promise<Buffer> {
+  const found = await categoryImageFile(name, dir);
+  if (found?.kind === 'photo') return found.data;
+  return categoryTile({ label: name, logo: found?.data });
 }

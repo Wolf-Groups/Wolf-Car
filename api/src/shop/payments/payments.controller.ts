@@ -3,9 +3,8 @@ import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { WebOrderView } from '../checkout/web-order.view';
-import { CurrentCustomer } from '../customers/current-customer.decorator';
-import { CustomerGuard } from '../customers/customer.guard';
-import type { CustomerPrincipal } from '../customers/customers.service';
+import type { OrderAccess } from '../checkout/order-access';
+import { CurrentOrderAccess, OptionalCustomerGuard } from '../customers/optional-customer.guard';
 import { PayDto } from '../dto/shop.dto';
 import { PaymentsService } from './payments.service';
 
@@ -16,22 +15,23 @@ import { PaymentsService } from './payments.service';
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
+  /** The signed-in customer's order, or any order with its X-Order-Key. */
   @ApiCookieAuth('wc_cst')
-  @UseGuards(CustomerGuard)
+  @UseGuards(OptionalCustomerGuard)
   @Audit('shop.order.pay', { entity: 'Order', idParam: 'id' })
   @Post('orders/:id/pay')
   @HttpCode(200)
-  pay(@CurrentCustomer() customer: CustomerPrincipal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
-    return this.payments.pay(customer, id, dto);
+  pay(@CurrentOrderAccess() access: OrderAccess, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
+    return this.payments.pay(access, id, dto);
   }
 
   @ApiCookieAuth('wc_cst')
-  @UseGuards(CustomerGuard)
+  @UseGuards(OptionalCustomerGuard)
   @Audit('shop.order.reconcile', { entity: 'Order', idParam: 'id' })
   @Post('orders/:id/reconcile')
   @HttpCode(200)
-  reconcile(@CurrentCustomer() customer: CustomerPrincipal, @Param('id', ParseUUIDPipe) id: string): Promise<WebOrderView> {
-    return this.payments.reconcile(customer, id);
+  reconcile(@CurrentOrderAccess() access: OrderAccess, @Param('id', ParseUUIDPipe) id: string): Promise<WebOrderView> {
+    return this.payments.reconcile(access, id);
   }
 
   /** Tap posts the charge here. No cookie: the hashstring header is the proof. */

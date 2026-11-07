@@ -28,6 +28,8 @@ describe('Visitor statistics (e2e)', () => {
     await send(IPHONE, { type: 'add_to_cart', path: '/ar/products', label: 'Floor Mats', targetId: 'p-1' });
     await send(IPHONE, { type: 'add_to_cart', path: '/ar/products', label: 'Floor Mats', targetId: 'p-1' });
     await send(IPHONE, { type: 'whatsapp_order', path: '/ar/products', label: 'binomran' });
+    // …and opened WolfOS from the landing page's section
+    await send(IPHONE, { type: 'wolfos', path: '/ar', label: 'section' });
     // a desktop visitor who typed the address, read one page and called
     await send(CHROME, { type: 'pageview', path: '/en/packages', entry: true, referrer: 'http://localhost:3000/en' });
     await send(CHROME, { type: 'call', path: '/en/packages', label: 'gharrafa' });
@@ -90,6 +92,7 @@ describe('Visitor statistics (e2e)', () => {
       visitorsAdded: 1,
       visitorsOrdered: 1,
       visitorsContacted: 2,
+      wolfos: 1,
     });
     expect(body.previous.visitors).toBe(0);
     expect(body.daily).toEqual([

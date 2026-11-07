@@ -1,8 +1,9 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
-import { CUSTOMER_EMAIL_MAX, normaliseQatarPhone, OTP_CODE_PATTERN } from '../../../../shared/shop';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEmail, IsIn, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { CUSTOMER_EMAIL_MAX, normaliseQatarPhone, OTP_CODE_PATTERN, PAYMENT_METHODS, type PaymentMethod } from '../../../../shared/shop';
 import { ORDER_MAX_LINES } from '../../../../shared/validation';
 import { CustomerName, OrderLineDto } from '../../orders/dto/orders.dto';
+import { CUSTOMER_CARS_MAX } from '../customers/customer-cars.service';
 
 /**
  * Phone as the customer typed it, normalised to "+974XXXXXXXX". Anything that
@@ -15,14 +16,25 @@ const QatarPhone = () => (target: object, key: string) => {
   Matches(/^\+974[3567]\d{7}$/, { message: 'phone must be a Qatari mobile number' })(target, key);
 };
 
-export class SendOtpDto {
-  @QatarPhone()
-  phone: string;
+/** An email address as the customer typed it: trimmed and lower-cased, so it is one identity however it was written. */
+const CustomerEmail = () => (target: object, key: string) => {
+  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))(target, key);
+  IsEmail()(target, key);
+  MaxLength(CUSTOMER_EMAIL_MAX)(target, key);
+};
+
+export class SendCodeDto {
+  @CustomerEmail()
+  email: string;
+
+  /** the language of the email */
+  @IsIn(['ar', 'en'])
+  locale: 'ar' | 'en';
 }
 
-export class VerifyOtpDto {
-  @QatarPhone()
-  phone: string;
+export class VerifyCodeDto {
+  @CustomerEmail()
+  email: string;
 
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.replace(/[٠-٩۰-۹]/g, (d) => String(d.charCodeAt(0) & 0xf)).trim() : value))
   @IsString()
@@ -30,7 +42,11 @@ export class VerifyOtpDto {
   code: string;
 }
 
-/** The basket plus the contact details Tap and Odoo need. Prices never come from the client. */
+/**
+ * The basket, how it is paid, and the contact details the branch, Tap and Odoo
+ * need. Prices never come from the client. A signed-in customer orders under
+ * their account's email, whatever `email` says.
+ */
 export class CreateWebOrderDto {
   @IsArray()
   @ArrayMinSize(1)
@@ -43,10 +59,19 @@ export class CreateWebOrderDto {
   @CustomerName()
   name: string;
 
-  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
-  @IsEmail()
-  @MaxLength(CUSTOMER_EMAIL_MAX)
+  /** for the branch to call; nothing is sent to it */
+  @QatarPhone()
+  phone: string;
+
+  @CustomerEmail()
   email: string;
+
+  @IsIn(PAYMENT_METHODS)
+  paymentMethod: PaymentMethod;
+
+  /** the website language, for the order's emails */
+  @IsIn(['ar', 'en'])
+  locale: 'ar' | 'en';
 }
 
 export class PayDto {
@@ -57,4 +82,13 @@ export class PayDto {
 
   @IsIn(['ar', 'en'])
   locale: 'ar' | 'en';
+}
+
+export class SaveCarsDto {
+  /** Car-model category ids, in the order the customer wants them; [] clears the list. */
+  @IsArray()
+  @ArrayMaxSize(CUSTOMER_CARS_MAX)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  categoryIds: string[];
 }

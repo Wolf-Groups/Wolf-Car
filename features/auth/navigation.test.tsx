@@ -38,6 +38,10 @@ describe("permission-gated navigation", () => {
     expect(labels(["booking.ppf.read"])).toEqual(["overview", "ppfBookings", "account"]);
   });
 
+  it("shows the call center the website's orders too (order.web.handle)", () => {
+    expect(labels(["booking.ppf.read", "booking.ppf.manage", "booking.general.manage", "order.web.handle"])).toContain("orders");
+  });
+
   it("follows per-user grants (e.g. activity.read given to Finance)", () => {
     expect(labels(["product.read", "activity.read"])).toContain("activity");
   });

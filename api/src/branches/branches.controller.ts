@@ -21,7 +21,7 @@ export class BranchesController {
   }
 
   /** Minimal branch list (no staff details) for filters and pickers. */
-  @RequireAnyPermission('branch.manage', 'order.read.all', 'product.reorder', 'user.manage', 'activity.read')
+  @RequireAnyPermission('branch.manage', 'order.read.all', 'order.web.handle', 'product.reorder', 'user.manage', 'activity.read')
   @Get('options')
   options() {
     return this.branches.options();

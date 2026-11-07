@@ -2,7 +2,7 @@ import type { StockInfo } from "@/lib/stock";
 import type { VariantInfo } from "@/lib/variants";
 import type { SiteDevice, SiteSource } from "@/shared/analytics";
 import type { OrderStatusName, PermissionGroup, PermissionKey, RoleName } from "@/shared/permissions";
-import type { OrderSourceName, PaymentStatusName } from "@/shared/shop";
+import type { OrderSourceName, PaymentMethod, PaymentStatusName } from "@/shared/shop";
 
 export type { OrderSourceName, OrderStatusName, PaymentStatusName, PermissionKey, RoleName };
 
@@ -22,6 +22,8 @@ export interface Profile {
   email: string | null;
   role: RoleName;
   branch: BranchSummary | null;
+  /** the user's branch is the one that holds website orders (the API's WEB_ORDERS_BRANCH_CODE) */
+  branchHoldsWebOrders: boolean;
   twoFactorEnabled: boolean;
   hasShowroomPassword: boolean;
   permissions: PermissionKey[];
@@ -215,10 +217,11 @@ export interface OrderDetail extends OrderSummary {
 // ---- online checkout (the website's customer, not staff) ----
 
 export interface CustomerProfile {
-  /** E.164, "+97455123456" */
-  phone: string;
+  /** what they signed in with, lower-case */
+  email: string;
   name: string | null;
-  email: string | null;
+  /** E.164, "+97455123456"; last typed at checkout */
+  phone: string | null;
 }
 
 export interface WebOrderItem {
@@ -230,18 +233,30 @@ export interface WebOrderItem {
   thumbUrl: string;
 }
 
+/** A car model the signed-in customer drives (the API's CustomerCarView); `id` is the catalogue's ?category=. */
+export interface CustomerCar {
+  id: string;
+  name: string;
+  nameEn: string | null;
+  thumbUrl: string | null;
+}
+
 /** What the website is told about a customer's own order (the API's WebOrderView, dates as strings). */
 export interface WebOrder {
   id: string;
   code: string;
   status: OrderStatusName;
   paymentStatus: PaymentStatusName;
+  /** "branch": paid at the branch on collection (paymentStatus NONE) */
+  paymentMethod: PaymentMethod;
   /** "619.50" */
   total: string;
   currency: string;
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
+  /** when the branch handed the paid order over */
+  collectedAt: string | null;
   branch: { code: string; name: string; nameAr: string };
   customer: { name: string | null; email: string | null; phone: string };
   items: WebOrderItem[];
@@ -351,6 +366,8 @@ export interface PublicCategory {
   /** English name for /en; null means show `name` */
   nameEn: string | null;
   carModel: string | null;
+  /** a car model a customer can add to "My cars"; false for parts, accessories and services */
+  isCar: boolean;
   imageUrl: string | null;
   thumbUrl: string | null;
   /** how many products the category holds */
@@ -484,6 +501,8 @@ export interface AnalyticsTotals {
   visitorsAdded: number;
   visitorsOrdered: number;
   visitorsContacted: number;
+  /** presses on a link to WolfOS, our app */
+  wolfos: number;
 }
 
 /** Visitor statistics of the public website between two Qatar days. */

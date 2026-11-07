@@ -10,7 +10,9 @@ import { OrdersService } from './orders.service';
 /**
  * Orders placed in the showrooms and on the website (source WEB, picked up at
  * the web-orders branch). Branch users only ever see and change their own
- * branch's orders; order.read.all lists every branch (read-only).
+ * branch's orders; order.read.all lists every branch (read-only);
+ * order.web.handle (the call center) reads every order and confirms, cancels
+ * and hands over the website's (orderWriteScope).
  */
 @ApiTags('orders')
 @ApiBearerAuth()
@@ -18,13 +20,13 @@ import { OrdersService } from './orders.service';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
-  @RequireAnyPermission('order.read.branch', 'order.read.all')
+  @RequireAnyPermission('order.read.branch', 'order.read.all', 'order.web.handle')
   @Get()
   list(@CurrentUser() user: AuthUser, @Query() query: ListOrdersQueryDto) {
     return this.orders.list(user, query);
   }
 
-  @RequireAnyPermission('order.read.branch', 'order.read.all')
+  @RequireAnyPermission('order.read.branch', 'order.read.all', 'order.web.handle')
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.orders.get(user, id);
@@ -39,7 +41,7 @@ export class OrdersController {
   }
 
   /** Makes the order immutable (for everyone but the Super Admin). */
-  @RequirePermissions('order.confirm')
+  @RequireAnyPermission('order.confirm', 'order.web.handle')
   @Audit('order.confirm', { entity: 'Order', idParam: 'id' })
   @Post(':id/confirm')
   @HttpCode(200)
@@ -48,7 +50,7 @@ export class OrdersController {
   }
 
   /** A paid web order's card is refunded first (502 REFUND_FAILED leaves the order as it was). */
-  @RequirePermissions('order.cancel')
+  @RequireAnyPermission('order.cancel', 'order.web.handle')
   @Audit('order.cancel', { entity: 'Order', idParam: 'id' })
   @Post(':id/cancel')
   @HttpCode(200)
@@ -56,8 +58,8 @@ export class OrdersController {
     return this.orders.cancel(user, id);
   }
 
-  /** The cashier hands a paid web order over at the counter (once). */
-  @RequirePermissions('order.confirm')
+  /** The cashier hands a paid (or confirmed pay-at-branch) web order over at the counter (once). */
+  @RequireAnyPermission('order.confirm', 'order.web.handle')
   @Audit('order.collect', { entity: 'Order', idParam: 'id' })
   @Post(':id/collect')
   @HttpCode(200)

@@ -2,7 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { preconnect } from "react-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Icon } from "@/components/Icon";
@@ -13,18 +14,27 @@ import { cart, type CartLine, orderMessage, useCart } from "@/features/catalog/c
 import { newIdempotencyKey } from "@/features/showroom/idempotency";
 import { ApiError } from "@/lib/api/client";
 import { fieldErrors } from "@/lib/api/errors";
-import type { CustomerProfile, WebOrder, WebOrderItem } from "@/lib/api/types";
+import type { WebOrder, WebOrderItem } from "@/lib/api/types";
 import { getBranches, waLink } from "@/lib/branches";
+import { hasArabic } from "@/lib/text";
 import { track } from "@/lib/track";
-import { CUSTOMER_EMAIL_MAX, EMAIL_PATTERN } from "@/shared/shop";
+import { cn } from "@/lib/utils";
+import { CUSTOMER_EMAIL_MAX, EMAIL_PATTERN, normaliseQatarPhone, type PaymentMethod } from "@/shared/shop";
 import { CUSTOMER_NAME_MAX, CUSTOMER_NAME_MIN, CUSTOMER_NAME_PATTERN } from "@/shared/validation";
+import type { ContactDetails } from "./checkout-state";
 import { OrderLines } from "./order-lines";
-import { shop } from "./shop-api";
+import { type CreateOrderBody, shop } from "./shop-api";
+import { loadTapSdk } from "./tap-sdk";
 import { useCheckoutError } from "./use-checkout-error";
 
 export interface DetailsStepProps {
-  customer: CustomerProfile;
-  onCreated: (order: WebOrder) => void;
+  /** what fills the form: the session's profile, or what the order was made with */
+  contact: ContactDetails;
+  /** a signed-in customer orders under their account's email: the field is read-only */
+  signedIn: boolean;
+  /** the build has Tap's public key: "pay now by card" is offered */
+  cardEnabled: boolean;
+  onCreated: (order: WebOrder & { key: string }) => void;
 }
 
 /** Same normalisation as the API's `CustomerName`: trimmed, inner whitespace collapsed. */
@@ -35,7 +45,15 @@ const schema = z.object({
     .string()
     .transform(normaliseName)
     .pipe(z.string().min(CUSTOMER_NAME_MIN).max(CUSTOMER_NAME_MAX).regex(CUSTOMER_NAME_PATTERN)),
-  email: z.string().trim().max(CUSTOMER_EMAIL_MAX).regex(EMAIL_PATTERN),
+  // a Qatari mobile however it was typed, sent as E.164
+  phone: z
+    .string()
+    .transform((value, ctx) => normaliseQatarPhone(value) ?? (ctx.addIssue({ code: "custom", message: "invalid" }), z.NEVER)),
+  email: z
+    .string()
+    .trim()
+    .transform((value) => value.toLowerCase())
+    .pipe(z.string().max(CUSTOMER_EMAIL_MAX).regex(EMAIL_PATTERN)),
 });
 type Input_ = z.input<typeof schema>;
 type Values = z.output<typeof schema>;
@@ -57,11 +75,48 @@ function basketSummary(lines: PricedLine[]): { items: WebOrderItem[]; total: str
   return { items, total: money(total) };
 }
 
+/** Where the tab keeps the last order sent without an answer, so a reload does not lose its key. */
+const UNANSWERED_KEY = "wolfcar.checkoutAttempt";
+/** Pressed again later than this, it is a new order: the API would hand back one long expired or cancelled. */
+const UNANSWERED_FOR_MS = 30 * 60_000;
+
 /**
- * Step 3: name and email over the basket; creates the unpaid order so the server total is shown before the card.
- * Only priced lines are ordered and paid; the unpriced ones stay in the basket, for WhatsApp.
+ * The Idempotency-Key to send this order with. One sent without an answer (offline, a timeout, a 5xx) may still
+ * have been placed: sent again unchanged, after a reload too, it keeps that key, and the API hands that order back
+ * instead of placing a second one. Anything changed in it is another order, with a new key.
  */
-export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
+function attemptKey(body: CreateOrderBody): string {
+  const sent = JSON.stringify(body);
+  try {
+    const last = JSON.parse(window.sessionStorage.getItem(UNANSWERED_KEY) ?? "null") as { body: string; key: string; at: number } | null;
+    if (last?.body === sent && Date.now() - last.at < UNANSWERED_FOR_MS) return last.key;
+  } catch {
+    /* storage blocked or garbled: a new key */
+  }
+  const key = newIdempotencyKey();
+  try {
+    window.sessionStorage.setItem(UNANSWERED_KEY, JSON.stringify({ body: sent, key, at: Date.now() }));
+  } catch {
+    /* storage blocked: the next press is a new order, as before */
+  }
+  return key;
+}
+
+/** The API answered (the order, or a refusal): the next press is a new order. */
+function attemptAnswered(): void {
+  try {
+    window.sessionStorage.removeItem(UNANSWERED_KEY);
+  } catch {
+    /* storage blocked: nothing was kept */
+  }
+}
+
+/**
+ * Step 1: name, mobile and email over the basket, and how to pay. A card order is created unpaid so the
+ * server total is shown before the card; an order to pay at the branch is placed there and then. Only priced
+ * lines are ordered; the unpriced ones stay in the basket, for WhatsApp.
+ */
+export function DetailsStep({ contact, signedIn, cardEnabled, onCreated }: DetailsStepProps) {
   const t = useTranslations("Checkout");
   const tc = useTranslations("Cart");
   const locale = useLocale() === "ar" ? "ar" : "en";
@@ -70,16 +125,26 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
   const lines = basket.filter((l): l is PricedLine => l.price !== null);
   const unpriced = basket.filter((l) => l.price === null);
   const [error, setError] = useState<string | null>(null);
+  const [method, setMethod] = useState<PaymentMethod>(cardEnabled ? "card" : "branch");
   /** `checkout_start` counts the first press of this visit to the step, not every retry */
   const [started, setStarted] = useState(false);
   const form = useForm<Input_, unknown, Values>({
     resolver: zodResolver(schema),
-    defaultValues: { name: customer.name ?? "", email: customer.email ?? "" },
+    defaultValues: { name: contact.name, phone: contact.phone, email: contact.email },
   });
   const { errors, isSubmitting } = form.formState;
   const summary = basketSummary(lines);
 
-  const submit = form.handleSubmit(async ({ name, email }) => {
+  // Tap's card form may come next: fetch its script while the customer types, so the card shows sooner
+  useEffect(() => {
+    if (!cardEnabled) return;
+    preconnect("https://sdk.tap.company");
+    loadTapSdk().catch(() => {
+      /* the pay step loads it again and says so if it still fails */
+    });
+  }, [cardEnabled]);
+
+  const submit = form.handleSubmit(async ({ name, phone, email }) => {
     if (lines.length === 0) return;
     setError(null);
     if (!started) {
@@ -89,8 +154,13 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
     try {
       // only ids and quantities: the server prices the order, never the browser
       const items = lines.map((l) => ({ productId: l.id, quantity: l.qty }));
-      onCreated(await shop.createOrder({ items, name, email }, newIdempotencyKey()));
+      const body: CreateOrderBody = { items, name, phone, email, paymentMethod: method, locale };
+      const order = await shop.createOrder(body, attemptKey(body));
+      attemptAnswered();
+      onCreated(order);
     } catch (e) {
+      // a refusal is an answer; a 429 is not: the rate limit turned the order away before reading it
+      if (e instanceof ApiError && e.status < 500 && e.status !== 429) attemptAnswered();
       const removed = e instanceof ApiError && e.code === "PRODUCT_UNAVAILABLE" ? (e.productIds ?? []).filter((id) => lines.some((l) => l.id === id)) : [];
       if (removed.length > 0) {
         removed.forEach((id) => cart.setQty(id, 0));
@@ -99,13 +169,16 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
       }
       const fields = fieldErrors(e);
       if (fields.name) form.setError("name", { message: "invalid" }, { shouldFocus: true });
-      if (fields.email) form.setError("email", { message: "invalid" }, { shouldFocus: !fields.name });
-      if (!fields.name && !fields.email) setError(message(e));
+      if (fields.phone) form.setError("phone", { message: "invalid" }, { shouldFocus: !fields.name });
+      if (fields.email) form.setError("email", { message: "invalid" }, { shouldFocus: !fields.name && !fields.phone });
+      if (!fields.name && !fields.phone && !fields.email) setError(message(e));
     }
   });
 
   const nameInvalid = Boolean(errors.name);
+  const phoneInvalid = Boolean(errors.phone);
   const emailInvalid = Boolean(errors.email);
+  const branch = getBranches(locale).binomran.name;
   return (
     <form onSubmit={submit} noValidate className="grid gap-6">
       <section aria-labelledby="checkout-summary" className="grid gap-1">
@@ -123,8 +196,8 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
           <ul className="grid gap-1 text-[14px]">
             {unpriced.map((l) => (
               <li key={l.id} className="flex items-baseline gap-2">
-                <span dir="auto" className="min-w-0 flex-1 text-start font-semibold">
-                  {l.name}
+                <span className="min-w-0 flex-1 text-start font-semibold">
+                  <bdi dir={hasArabic(l.name) ? "rtl" : "ltr"}>{l.name}</bdi>
                 </span>
                 <span dir="ltr" className="shrink-0 text-ink-2 tabular-nums">
                   ×{l.qty}
@@ -166,6 +239,29 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
           )}
         </div>
         <div className="grid gap-2">
+          <Label htmlFor="checkout-phone">{t("phoneLabel")}</Label>
+          <Input
+            id="checkout-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            dir="ltr"
+            placeholder="5512 3456"
+            aria-invalid={phoneInvalid || undefined}
+            aria-describedby={phoneInvalid ? "checkout-phone-hint checkout-phone-invalid" : "checkout-phone-hint"}
+            className="text-start"
+            {...form.register("phone")}
+          />
+          <p id="checkout-phone-hint" className="text-[13px] text-ink-2">
+            {t("phoneHint")}
+          </p>
+          {phoneInvalid && (
+            <p id="checkout-phone-invalid" className="text-[13px] font-semibold text-danger">
+              {t("phoneInvalid")}
+            </p>
+          )}
+        </div>
+        <div className="grid gap-2">
           <Label htmlFor="checkout-email">{t("emailLabel")}</Label>
           <Input
             id="checkout-email"
@@ -174,14 +270,15 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
             autoComplete="email"
             spellCheck={false}
             dir="ltr"
+            readOnly={signedIn}
             maxLength={CUSTOMER_EMAIL_MAX}
             aria-invalid={emailInvalid || undefined}
             aria-describedby={emailInvalid ? "checkout-email-hint checkout-email-invalid" : "checkout-email-hint"}
-            className="text-start"
+            className={cn("text-start", signedIn && "bg-sand text-ink-2")}
             {...form.register("email")}
           />
           <p id="checkout-email-hint" className="text-[13px] text-ink-2">
-            {t("emailHint")}
+            {t(signedIn ? "emailAccountHint" : "emailHint")}
           </p>
           {emailInvalid && (
             <p id="checkout-email-invalid" className="text-[13px] font-semibold text-danger">
@@ -191,13 +288,46 @@ export function DetailsStep({ customer, onCreated }: DetailsStepProps) {
         </div>
       </div>
 
+      <fieldset className="grid gap-2">
+        <legend className="mb-2 text-[17px] font-extrabold">{t("payTitle")}</legend>
+        {cardEnabled ? (
+          (["card", "branch"] as const).map((value) => (
+            <label
+              key={value}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-[var(--radius-brand)] border-[1.5px] border-line p-3.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-ink",
+                method === value && "border-accent bg-accent/5",
+              )}
+            >
+              <input
+                type="radio"
+                name="checkout-payment"
+                value={value}
+                checked={method === value}
+                onChange={() => setMethod(value)}
+                className="mt-1 size-4 accent-[var(--color-accent)]"
+              />
+              <span className="grid gap-0.5">
+                <b className="text-[15px]">{t(value === "card" ? "payCard" : "payBranch")}</b>
+                <small className="text-[13px] text-ink-2">{value === "card" ? t("payCardHint") : t("payBranchHint", { branch })}</small>
+              </span>
+            </label>
+          ))
+        ) : (
+          <div className="grid gap-0.5 rounded-[var(--radius-brand)] border-[1.5px] border-line p-3.5">
+            <b className="text-[15px]">{t("payBranch")}</b>
+            <small className="text-[13px] text-ink-2">{t("payBranchHint", { branch })}</small>
+          </div>
+        )}
+      </fieldset>
+
       {error && (
         <p role="alert" className="rounded-[var(--radius-brand)] bg-danger-soft px-3 py-2.5 text-[15px] font-semibold text-danger">
           {error}
         </p>
       )}
       <Button type="submit" size="lg" disabled={isSubmitting || lines.length === 0}>
-        {t("continueToPay")}
+        {method === "card" ? t("continueToPay") : t("placeOrder")}
       </Button>
     </form>
   );

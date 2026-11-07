@@ -4,7 +4,8 @@
 #   scripts/deploy.sh             git pull, then deploy
 #   scripts/deploy.sh --no-pull   deploy the working tree as it is
 # Database migrations are applied by the API on start and are NOT undone by a
-# rollback; they are additive by convention.
+# rollback; they are additive by convention. One that is not is undone only by
+# scripts/restore.sh with the backup taken before the deploy.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 cd "$ROOT"
@@ -30,9 +31,10 @@ for svc in api web; do
 done
 
 dc build
-dc up -d
 
-if wait_healthy 240 && "$SMOKE" "$PUBLIC_URL"; then
+# `up` waits for the new API to be healthy before it starts the website: bounded, and
+# inside the `if`, so an API that never gets there (a bad setting, a crash loop) rolls back
+if timeout 300 "${DC[@]}" up -d && wait_healthy 240 && "$SMOKE" "$PUBLIC_URL"; then
   docker image prune -f >/dev/null
   echo "deployed $(git rev-parse --short HEAD)"
   exit 0
@@ -48,8 +50,7 @@ fi
 
 echo "---- rolling back to the previous images ----" >&2
 for svc in api web; do docker tag "wolfcar-$svc:previous" "wolfcar-$svc:latest"; done
-dc up -d --no-build
-if wait_healthy 240 && "$ROOT/scripts/smoke.sh" "$PUBLIC_URL"; then
+if timeout 300 "${DC[@]}" up -d --no-build && wait_healthy 240 && "$ROOT/scripts/smoke.sh" "$PUBLIC_URL"; then
   echo "rolled back; the site is on the previous version" >&2
 else
   echo "ROLLBACK ALSO FAILED — check 'docker compose -f compose.prod.yml ps' now" >&2

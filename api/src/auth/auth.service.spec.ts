@@ -39,7 +39,7 @@ describe('AuthService', () => {
   const sessions = mock<SessionUserService>();
   const pins = mock<ShowroomPinService>();
   const trail = mock<AuditTrail>();
-  const config = new ConfigService({ LOGIN_LOCK_MINUTES: 15 });
+  const config = new ConfigService({ LOGIN_LOCK_MINUTES: 15, WEB_ORDERS_BRANCH_CODE: 'BO' });
   const service = new AuthService(prisma, passwords, tokens, lockout, twoFactor, sessions, pins, trail, config as never);
 
   const principal = (permissions: PermissionKey[] = []) => ({
@@ -181,6 +181,23 @@ describe('AuthService', () => {
     sessions.permissionsFor.mockResolvedValue(new Set());
     await expect(service.showroomPinLogin({ branchId: 'b-1', pin: '482913' }, meta)).rejects.toBeInstanceOf(ForbiddenException);
     expect(tokens.createSession).not.toHaveBeenCalled();
+  });
+
+  it('tells the profile whether the user\'s branch is the one that holds website orders', async () => {
+    const onBranch = (code: string | null) =>
+      prisma.user.findUniqueOrThrow.mockResolvedValue({
+        ...baseUser,
+        displayName: 'M',
+        email: null,
+        branch: code && { id: 'b-1', code, name: code, nameAr: code },
+      } as never);
+    onBranch('BO');
+    expect((await service.profile(principal())).branchHoldsWebOrders).toBe(true);
+    onBranch('GH');
+    expect((await service.profile(principal())).branchHoldsWebOrders).toBe(false);
+    // the call center and Finance belong to no branch
+    onBranch(null);
+    expect((await service.profile(principal())).branchHoldsWebOrders).toBe(false);
   });
 
   it('logout revokes the session behind the cookie and ignores unknown cookies', async () => {

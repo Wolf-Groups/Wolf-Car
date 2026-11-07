@@ -59,7 +59,9 @@ export function configureApp(app: INestApplication): void {
   express.useBodyParser('json', { limit: '100kb' });
   express.useBodyParser('urlencoded', { limit: '100kb', extended: false });
 
-  const allowlist = new Set(corsOrigins({ CORS_ORIGINS: config.get('CORS_ORIGINS', { infer: true }) }));
+  const allowlist = new Set(
+    corsOrigins({ CORS_ORIGINS: config.get('CORS_ORIGINS', { infer: true }), NODE_ENV: config.get('NODE_ENV', { infer: true }) }),
+  );
   app.enableCors({
     origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) =>
       cb(null, !origin || allowlist.has(origin)),

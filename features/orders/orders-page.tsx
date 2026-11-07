@@ -24,6 +24,7 @@ import { fast } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { ORDER_STATUSES } from "@/shared/permissions";
 import { DebouncedInput } from "./debounced-input";
+import { defaultSource } from "./default-source";
 import { OrderDetailSheet } from "./order-detail-sheet";
 import { EMPTY_STATE, fetchOrders, hasFilters, type OrderFilters, orderKeys, PAGE_SIZE } from "./queries";
 import { useOrdersUrlState } from "./use-url-state";
@@ -187,7 +188,7 @@ function OrdersTable({
 export function OrdersPage() {
   const t = useTranslations("Orders");
   const { canAny } = useAuth();
-  if (!canAny("order.read.branch", "order.read.all")) {
+  if (!canAny("order.read.branch", "order.read.all", "order.web.handle")) {
     return (
       <>
         <PageHeader title={t("title")} />
@@ -201,14 +202,19 @@ export function OrdersPage() {
 function OrdersManager() {
   const t = useTranslations("Orders");
   const tc = useTranslations("Common");
-  const { can } = useAuth();
+  const { user, can } = useAuth();
   const [state, update] = useOrdersUrlState();
-  const readsAll = can("order.read.all");
+  // the call center (order.web.handle) reads every branch's orders, as order.read.all does
+  const handlesWeb = can("order.web.handle");
+  const readsAll = can("order.read.all") || handlesWeb;
+  // without ?source= the page opens on the user's own tab: a branch that holds no website orders opens on its showroom's
+  const defaultTab = defaultSource(user);
+  const tab: OrderSourceName = state.source || defaultTab;
 
   const filters = useMemo<OrderFilters>(
     () => ({
       status: state.status,
-      source: state.source,
+      source: tab,
       from: state.from,
       to: state.to,
       customerName: state.customerName,
@@ -216,9 +222,10 @@ function OrdersManager() {
       branchId: readsAll ? state.branchId : "",
       page: state.page,
     }),
-    [state.status, state.source, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
+    [state.status, tab, state.from, state.to, state.customerName, state.orderNumber, state.branchId, state.page, readsAll],
   );
-  const filtered = hasFilters(filters);
+  // the tab is where the list is, not a filter to clear
+  const filtered = hasFilters({ ...filters, source: "" });
 
   const orders = useQuery({
     queryKey: orderKeys.list(filters),
@@ -234,21 +241,24 @@ function OrdersManager() {
   });
 
   const setFilter = (patch: Partial<OrderFilters>) => update({ ...patch, page: 1 });
-  const clear = () => update({ ...EMPTY_STATE, open: state.open });
-  const subtitle = readsAll
+  const clear = () => update({ ...EMPTY_STATE, source: state.source, open: state.open });
+  const subtitle = handlesWeb
+    ? t("subtitleCallCenter")
+    : readsAll
     ? can("order.update") || can("order.confirm") || can("order.cancel")
       ? t("subtitleAdmin")
       : t("subtitleAll")
-    : t("subtitleBranch");
+    : defaultTab === "WEB"
+    ? t("subtitleBranch")
+    : t("subtitleShowroom");
 
   const statusOptions: { value: OrderStatusName | "ALL"; label: string }[] = [
     { value: "ALL", label: tc("all") },
     ...ORDER_STATUSES.map((s) => ({ value: s, label: tc(`orderStatus.${s}`) })),
   ];
-  const sourceOptions: { value: OrderSourceName | "ALL"; label: string }[] = [
-    { value: "ALL", label: t("sourceAll") },
-    { value: "SHOWROOM", label: t("sourceShowroom") },
-    { value: "WEB", label: t("sourceWeb") },
+  const tabOptions: { value: OrderSourceName; label: string }[] = [
+    { value: "WEB", label: t("tabWeb") },
+    { value: "SHOWROOM", label: t("tabShowroom") },
   ];
 
   let body;
@@ -279,6 +289,15 @@ function OrdersManager() {
     <>
       <PageHeader title={t("title")} subtitle={subtitle} />
 
+      <Segmented
+        label={t("tabsLabel")}
+        value={tab}
+        options={tabOptions}
+        // a picked tab stays in the URL, so it never falls back to the user's own
+        onChange={(v) => update({ source: v, status: "", page: 1, open: null })}
+        className="mb-4"
+      />
+
       <section aria-label={tc("filters")} className="mb-4 grid grid-cols-1 gap-4 rounded-[var(--radius-brand-lg)] border border-line p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -287,12 +306,6 @@ function OrdersManager() {
               value={state.status || "ALL"}
               options={statusOptions}
               onChange={(v) => setFilter({ status: v === "ALL" ? "" : v })}
-            />
-            <Segmented
-              label={t("source")}
-              value={state.source || "ALL"}
-              options={sourceOptions}
-              onChange={(v) => setFilter({ source: v === "ALL" ? "" : v })}
             />
           </div>
           {filtered && (

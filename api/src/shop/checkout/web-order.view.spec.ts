@@ -12,6 +12,7 @@ const row = (over: Partial<WebOrderRow> = {}): WebOrderRow => ({
   createdAt: new Date('2026-10-18T10:00:00.000Z'),
   expiresAt: new Date('2026-10-18T10:30:00.000Z'),
   paidAt: null,
+  collectedAt: null,
   customerName: 'Sara Al Thani',
   customerEmail: 'sara@example.qa',
   customerPhone: '+97455123456',
@@ -32,11 +33,13 @@ describe('webOrderView', () => {
       code: 'BO-000001',
       status: 'PENDING',
       paymentStatus: 'PENDING',
+      paymentMethod: 'card',
       total: '619.50',
       currency: 'QAR',
       createdAt: '2026-10-18T10:00:00.000Z',
       expiresAt: '2026-10-18T10:30:00.000Z',
       paidAt: null,
+      collectedAt: null,
       branch: { code: 'BO', name: 'Bin Omran', nameAr: 'بن عمران' },
       customer: { name: 'Sara Al Thani', email: 'sara@example.qa', phone: '+97455123456' },
       items: [
@@ -53,7 +56,17 @@ describe('webOrderView', () => {
     expect(view).toMatchObject({ paymentStatus: 'PAID', status: 'CONFIRMED', paidAt: '2026-10-18T10:05:00.000Z', expiresAt: null, lastPayment: null });
   });
 
-  it('never leaks a staff name or the customer id', () => {
+  it('says when the branch handed a paid order over', () => {
+    const view = webOrderView(row({ paymentStatus: 'PAID', status: 'CONFIRMED', collectedAt: new Date('2026-10-19T08:00:00.000Z') }));
+    expect(view.collectedAt).toBe('2026-10-19T08:00:00.000Z');
+  });
+
+  it('names an order without online payment (NONE) as paid at the branch, every other as card', () => {
+    expect(webOrderView(row({ paymentStatus: 'NONE', expiresAt: null })).paymentMethod).toBe('branch');
+    for (const paymentStatus of ['PENDING', 'PAID', 'REFUNDED'] as const) expect(webOrderView(row({ paymentStatus })).paymentMethod).toBe('card');
+  });
+
+    it('never leaks a staff name or the customer id', () => {
     const view = webOrderView(row()) as unknown as Record<string, unknown>;
     expect(view).not.toHaveProperty('customerId');
     expect(view).not.toHaveProperty('createdBy');

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isCarModel } from './category-kind';
 import { PrismaService } from '../prisma/prisma.service';
 import { inStock } from '../products/stock';
 import { countCards, VARIANT_SELECT, variantView } from '../products/variant.view';
@@ -33,6 +34,8 @@ export interface PublicCategory {
   /** English name for the /en pages; null means show `name` */
   nameEn: string | null;
   carModel: string | null;
+  /** a car model a customer can add to "My cars" (not parts, accessories or services) */
+  isCar: boolean;
   imageUrl: string | null;
   thumbUrl: string | null;
   count: number;
@@ -105,6 +108,7 @@ export class PublicCatalogService {
         name: c.name,
         nameEn: c.nameEn,
         carModel: c.carModel,
+        isCar: isCarModel(c),
         imageUrl: c.imageKey ? imageUrl(c.imageKey) : null,
         thumbUrl: c.imageKey ? imageUrl(c.imageKey, 'sm') : null,
         count: c._count.products,

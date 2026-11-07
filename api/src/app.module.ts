@@ -15,6 +15,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { AUTH_THROTTLE_KEY } from './common/decorators/auth-throttle.decorator';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { type Env, validateEnv } from './config/env';
+import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { OdooModule } from './odoo/odoo.module';
 import { OrdersModule } from './orders/orders.module';
@@ -85,6 +86,7 @@ type IdRequest = IncomingMessage & { id?: string };
       }),
     }),
     PrismaModule,
+    EmailModule,
     ActivityModule,
     AuthModule,
     AccountModule,

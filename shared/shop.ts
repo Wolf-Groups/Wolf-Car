@@ -37,6 +37,16 @@ export const OTP_CODE_PATTERN = /^\d{6}$/;
 export const CUSTOMER_EMAIL_MAX = 254;
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/** How a web order is paid: by card now (Tap), or at the branch when it is collected. */
+export const PAYMENT_METHODS = ['card', 'branch'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** Open (unconfirmed) pay-at-branch orders one customer may hold. */
+export const BRANCH_ORDERS_OPEN_MAX = 3;
+
+/** What lets a guest open their own order: `?key=` on the website, `X-Order-Key` to the API. */
+export const ORDER_KEY_PATTERN = /^[A-Za-z0-9_-]{32}$/;
+
 export const ORDER_SOURCES = ['SHOWROOM', 'WEB'] as const;
 export type OrderSourceName = (typeof ORDER_SOURCES)[number];
 

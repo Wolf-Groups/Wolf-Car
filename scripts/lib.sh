@@ -2,8 +2,10 @@
 # Bash only (uses BASH_SOURCE); the scripts run it with bash.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# docker compose for this project; DC is the same command as an array, for `timeout 300 "${DC[@]}" ...`
+DC=(docker compose -f "$ROOT/compose.prod.yml" --env-file "$ROOT/deploy/prod.env")
 dc() {
-  docker compose -f "$ROOT/compose.prod.yml" --env-file "$ROOT/deploy/prod.env" "$@"
+  "${DC[@]}" "$@"
 }
 
 # Exports POSTGRES_PASSWORD and PUBLIC_URL from deploy/prod.env.

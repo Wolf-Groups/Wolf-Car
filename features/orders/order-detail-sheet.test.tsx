@@ -292,6 +292,86 @@ describe("order detail: web orders", () => {
   });
 });
 
+describe("order detail: web orders paid at the branch", () => {
+  /** Placed on the website to pay at the branch: nothing paid online, never in Odoo, waiting for the call. */
+  const atBranch = (overrides: Partial<OrderDetail> = {}) =>
+    webOrder({ status: "PENDING", paymentStatus: "NONE", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null, ...overrides });
+  const CONFIRMED = { status: "CONFIRMED" as const, confirmedBy: CASHIER_REF, confirmedAt: "2031-03-10T10:00:00.000Z" };
+
+  it("says it is paid at the branch, and lets the cashier confirm it after calling the customer", async () => {
+    const order = atBranch();
+    serve(order, atBranch(CONFIRMED));
+    let confirms = 0;
+    server.use(
+      http.post("/api/orders/:id/confirm", () => {
+        confirms += 1;
+        return HttpResponse.json(atBranch(CONFIRMED));
+      }),
+    );
+    const { sheet, user } = await openSheet(order);
+    expect(within(sheet).getAllByText("Pay at branch").length).toBeGreaterThan(0);
+    expect(within(sheet).getByText(/Call the customer to confirm/)).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Edit order" })).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "Confirm order" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Confirm order" }));
+    await waitFor(() => expect(confirms).toBe(1));
+  });
+
+  it("once confirmed, the cashier takes the payment at the till and marks it collected", async () => {
+    const order = atBranch(CONFIRMED);
+    serve(order);
+    const { sheet, user } = await openSheet(order);
+    // the till rings these parts up: their bars are shown, unlike on a card order
+    expect(within(sheet).getByText("6291041500244")).toBeInTheDocument();
+    expect(within(sheet).queryByText("Paid online — nothing to collect at the till")).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "Mark as collected" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/Take the payment of .*619\.50.* at the till first/)).toBeInTheDocument();
+  });
+
+  it("offers Collected only once it is confirmed", async () => {
+    const order = atBranch();
+    serve(order);
+    const { sheet } = await openSheet(order);
+    expect(within(sheet).queryByRole("button", { name: "Mark as collected" })).not.toBeInTheDocument();
+  });
+});
+
+describe("order detail: the call center (order.web.handle)", () => {
+  const callCenter = () =>
+    makeUser({ username: "amani", displayName: "Amani", role: "RESERVATIONS", branch: null, permissions: ["booking.ppf.read", "order.web.handle"] });
+  const atBranch = (overrides: Partial<OrderDetail> = {}) =>
+    webOrder({ status: "PENDING", paymentStatus: "NONE", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null, ...overrides });
+
+  it("confirms or cancels a pay-at-branch order after calling the customer", async () => {
+    const order = atBranch();
+    serve(order);
+    const { sheet } = await openSheet(order, callCenter());
+    expect(within(sheet).getByRole("link", { name: /5512\s?3456/ })).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Confirm order" })).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
+    expect(within(sheet).queryByRole("button", { name: "Edit order" })).not.toBeInTheDocument();
+  });
+
+  it("hands a confirmed one over, and downloads its receipt", async () => {
+    const order = atBranch({ status: "CONFIRMED", confirmedBy: CASHIER_REF, confirmedAt: "2031-03-10T10:00:00.000Z" });
+    serve(order);
+    const { sheet } = await openSheet(order, callCenter());
+    expect(within(sheet).getByRole("button", { name: "Mark as collected" })).toBeInTheDocument();
+    expect(within(sheet).getAllByRole("button", { name: /receipt/i }).length).toBeGreaterThan(0);
+  });
+
+  it("only looks at a showroom order", async () => {
+    const showroom = webOrder({ source: "SHOWROOM", status: "PENDING", paymentStatus: "NONE", paidAt: null, customerPhone: null, customerEmail: null, payment: null, odoo: null, createdBy: CASHIER_REF, confirmedBy: null, confirmedAt: null });
+    serve(showroom);
+    const { sheet } = await openSheet(showroom, callCenter());
+    for (const name of ["Confirm order", "Cancel order", "Edit order", "Mark as collected"]) {
+      expect(within(sheet).queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+  });
+});
+
 describe("order detail: web orders, money and Odoo (fix round 1)", () => {
   const admin = () =>
     makeUser({

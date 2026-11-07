@@ -9,16 +9,19 @@ import { Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle } 
 import { Link } from "@/i18n/navigation";
 import { LOGO } from "@/lib/content";
 import { cn } from "@/lib/utils";
+import { AccountLink } from "./AccountLink";
 import { openBooking } from "./BookingForm";
 import { useContact } from "./ContactProvider";
 import { Icon } from "./Icon";
 import { LocaleSwitcher } from "./LocaleSwitcher";
 import { ThemeToggle } from "./ThemeToggle";
+import { WolfOsLink } from "./WolfOsLink";
 
 /**
  * Landing-page header: a floating glass bar over the hero (light or dark with
- * the theme) that turns solid once the hero has scrolled away. Below lg the links move into a menu
- * sheet (call and WhatsApp stay in the bottom StickyBar on phones).
+ * the theme) that turns solid once the hero has scrolled away. Below xl the links move into a menu
+ * sheet (call and WhatsApp stay in the bottom StickyBar on phones): with "Our app" next to them they
+ * no longer fit one line on a smaller laptop.
  */
 export function Header() {
   const t = useTranslations("Header");
@@ -96,14 +99,14 @@ export function Header() {
           </span>
         </a>
 
-        <nav aria-label={t("navAria")} className="hidden items-center gap-1 text-[15px] font-semibold lg:flex">
+        <nav aria-label={t("navAria")} className="hidden items-center gap-1 text-[15px] font-semibold xl:flex">
           {links.map((l) =>
             l.href.startsWith("/") ? (
-              <Link key={l.href} href={l.href} className={cn("rounded-[10px] px-3 py-2 transition-colors", onHero)}>
+              <Link key={l.href} href={l.href} className={cn("rounded-[10px] px-2.5 py-2 whitespace-nowrap transition-colors", onHero)}>
                 {l.label}
               </Link>
             ) : (
-              <a key={l.href} href={l.href} className={cn("rounded-[10px] px-3 py-2 transition-colors", onHero)}>
+              <a key={l.href} href={l.href} className={cn("rounded-[10px] px-2.5 py-2 whitespace-nowrap transition-colors", onHero)}>
                 {l.label}
               </a>
             ),
@@ -111,6 +114,12 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-0.5">
+          {/* our app stays in the bar on phones too, not only in the menu */}
+          <span className="me-1.5">
+            <WolfOsLink place="header" />
+          </span>
+          {/* beside the page links (xl) only the icon fits; its name stays for screen readers and as a tooltip */}
+          <AccountLink className={onHero} iconOnlyFrom="xl" />
           <ThemeToggle className={cn("hidden sm:grid", onHero)} />
           <LocaleSwitcher className={cn("hidden px-2 sm:inline-flex", onHero)} />
           <button
@@ -135,7 +144,7 @@ export function Header() {
             onClick={() => setMenu(true)}
             aria-label={t("menu")}
             aria-expanded={menu}
-            className={cn("grid size-11 place-items-center rounded-[12px] transition-colors lg:hidden", onHero)}
+            className={cn("grid size-11 place-items-center rounded-[12px] transition-colors xl:hidden", onHero)}
           >
             <Menu className="size-6" aria-hidden="true" strokeWidth={2} />
           </button>
@@ -151,6 +160,9 @@ export function Header() {
             <SheetBody>
               <nav aria-label={t("navAria")}>
                 <ul className="divide-y divide-line">
+                  <li>
+                    <WolfOsLink place="menu" onClick={() => setMenu(false)} />
+                  </li>
                   {links.map((l) => (
                     <li key={l.href}>
                       {l.href.startsWith("/") ? (

@@ -177,6 +177,8 @@ export class AuthService {
       email: u.email,
       role: u.role,
       branch: u.branch,
+      // so the dashboard opens that branch on its website orders, and every other branch on its showroom's
+      branchHoldsWebOrders: u.branch?.code === this.config.get('WEB_ORDERS_BRANCH_CODE', { infer: true }),
       twoFactorEnabled: u.twoFactorEnabled,
       hasShowroomPassword: u.showroomPasswordHash !== null,
       permissions: [...principal.permissions].sort(),

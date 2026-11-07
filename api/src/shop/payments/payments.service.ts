@@ -7,16 +7,24 @@ import type { Prisma } from '../../generated/prisma/client';
 import { OdooOrdersService } from '../../odoo/odoo-orders.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { checkoutUnavailable, orderNotFound } from '../checkout/checkout.service';
+import { type OrderAccess, orderAccessWhere } from '../checkout/order-access';
+import { orderKey } from '../checkout/order-key';
 import { ensureSystemWebUser } from '../checkout/system-web-user';
 import { WEB_ORDER_SELECT, webOrderView, type WebOrderView } from '../checkout/web-order.view';
-import type { CustomerPrincipal } from '../customers/customers.service';
 import type { PayDto } from '../dto/shop.dto';
+import { OrderEmailsService } from '../emails/order-emails.service';
 import { type GatewayRefund, PAYMENT_GATEWAY, type PaymentGateway, PaymentGatewayError } from './payment-gateway';
 import { chargeOutcome, formatTapAmount, sameAmount, type TapCharge } from './tap-charge';
 import { verifyTapSignature } from './tap-signature';
 
 export type SettleOutcome = 'paid' | 'already_paid' | 'failed' | 'pending' | 'amount_mismatch' | 'duplicate_capture' | 'unknown_charge';
-export type SettleVia = 'webhook' | 'reconcile' | 'create';
+export type SettleVia = 'webhook' | 'reconcile' | 'create' | 'expiry';
+
+/** What settleBeforeExpiry learnt: reachable false when Tap could not be asked (the sweep keeps the order). */
+export interface ExpiryCheck {
+  reachable: boolean;
+  settled: { chargeId: string; outcome: SettleOutcome }[];
+}
 
 /** What a settle transaction decided; the audit entry is written from it after the commit. */
 interface Settled {
@@ -110,16 +118,20 @@ export class PaymentsService {
     private readonly trail: AuditTrail,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway | null,
     private readonly odooOrders: OdooOrdersService,
+    private readonly emails: OrderEmailsService,
   ) {}
 
-  /** Creates a Payment and a Tap charge; answers the 3-D Secure URL. 404 for anyone else's order. 409 ALREADY_PAID (checked first) / ORDER_NOT_PAYABLE, 402 PAYMENT_FAILED. */
-  async pay(customer: CustomerPrincipal, orderId: string, dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
+  /**
+   * Creates a Payment and a Tap charge; answers the 3-D Secure URL. 404 when `access` cannot open the order. 409
+   * ALREADY_PAID (checked first) / ORDER_NOT_PAYABLE (also a pay-at-branch order), 402 PAYMENT_FAILED. Tap sends the
+   * customer back to a return page that carries the order's key, so it opens without a session.
+   */
+  async pay(access: OrderAccess, orderId: string, dto: PayDto): Promise<{ redirectUrl: string | null; order: WebOrderView }> {
     const gateway = this.requireGateway();
     const webUrl = this.publicUrl('WEB_PUBLIC_URL');
     const apiUrl = this.publicUrl('API_PUBLIC_URL');
 
-    const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId: customer.id }, select: WEB_ORDER_SELECT });
-    if (!order) throw orderNotFound();
+    const order = await this.findOrder(access, orderId);
     this.trail.setEntity('Order', order.id).setBranch(order.branch.id);
 
     // any captured attempt, not only the newest: a later attempt from another tab may have failed
@@ -140,8 +152,8 @@ export class PaymentsService {
         amount: money(order.total),
         currency: 'QAR',
         tokenId: dto.tokenId,
-        customer: { name: order.customerName, email: order.customerEmail ?? customer.email ?? '', phone: order.customerPhone ?? customer.phone },
-        redirectUrl: `${webUrl}/${dto.locale}/checkout/return?order=${order.id}`,
+        customer: { name: order.customerName, email: order.customerEmail ?? '', phone: order.customerPhone ?? '' },
+        redirectUrl: `${webUrl}/${dto.locale}/checkout/return?order=${order.id}&key=${orderKey(order.id, this.secret())}`,
         postUrl: `${apiUrl}/api/shop/payments/tap/webhook`,
         orderId: order.id,
         orderCode: order.code,
@@ -164,11 +176,12 @@ export class PaymentsService {
     return { redirectUrl: charge.transaction?.url ?? null, order: webOrderView(fresh) };
   }
 
-  /** Reads the newest attempt's charge back from the provider and settles it; used by the return page. */
-  async reconcile(customer: CustomerPrincipal, orderId: string): Promise<WebOrderView> {
-    const gateway = this.requireGateway();
-    const order = await this.prisma.order.findFirst({ where: { id: orderId, customerId: customer.id }, select: WEB_ORDER_SELECT });
-    if (!order) throw orderNotFound();
+  /**
+   * Reads the newest attempt's charge back from the provider and settles it; used by the return page. An order
+   * nothing was charged for (paid at the branch, or the card form not sent yet) is answered as it is, gateway or not.
+   */
+  async reconcile(access: OrderAccess, orderId: string): Promise<WebOrderView> {
+    const order = await this.findOrder(access, orderId);
     this.trail.setEntity('Order', order.id).setBranch(order.branch.id);
 
     const latest = await this.prisma.payment.findFirst({
@@ -177,6 +190,7 @@ export class PaymentsService {
       select: { chargeId: true },
     });
     if (!latest?.chargeId) return webOrderView(order);
+    const gateway = this.requireGateway();
 
     let charge: TapCharge;
     try {
@@ -190,6 +204,35 @@ export class PaymentsService {
     }
     await this.settle(charge, 'reconcile');
     return webOrderView(await this.prisma.order.findUniqueOrThrow({ where: { id: order.id }, select: WEB_ORDER_SELECT }));
+  }
+
+  /**
+   * For the expiry sweep, before it cancels an unpaid card order: reads every attempt Tap still has open back from
+   * Tap, newest first, and settles each. A customer who paid and closed the page before coming back, and whose
+   * webhook never came, still gets a paid order. Stops at the first charge Tap cannot be asked about (reachable
+   * false). Without a gateway nobody can be asked: reachable, nothing settled, as before.
+   */
+  async settleBeforeExpiry(orderId: string): Promise<ExpiryCheck> {
+    const open = await this.prisma.payment.findMany({
+      where: { orderId, status: 'INITIATED', chargeId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { chargeId: true },
+    });
+    const settled: ExpiryCheck['settled'] = [];
+    if (!this.gateway) return { reachable: true, settled };
+    for (const { chargeId } of open) {
+      if (!chargeId) continue;
+      let charge: TapCharge;
+      try {
+        charge = await this.gateway.getCharge(chargeId);
+      } catch (err) {
+        if (!(err instanceof PaymentGatewayError)) throw err;
+        this.logger.warn(`Before expiring order ${orderId}: the provider answered ${err.code} for ${chargeId}`);
+        return { reachable: false, settled };
+      }
+      settled.push({ chargeId, outcome: (await this.settle(charge, 'expiry')).outcome });
+    }
+    return { reachable: true, settled };
   }
 
   /** Verifies the hashstring header, then settles. 401 BAD_SIGNATURE, 404 UNKNOWN_CHARGE; { received: true } for every known charge, whatever the outcome. */
@@ -277,6 +320,8 @@ export class PaymentsService {
     if (settled.orderId) this.trail.setEntity('Order', settled.orderId).setBranch(settled.branchId);
     this.trail.addMetadata({ via, chargeId: charge.id, outcome: settled.outcome, ...(settled.afterExpiry ? { afterExpiry: true } : {}) });
     if (settled.failure) this.trail.markFailure(settled.failure);
+    // only the settle that made it PAID: a re-delivered webhook or a later reconcile is already_paid
+    if (settled.outcome === 'paid' && settled.orderId) await this.emails.paid(settled.orderId);
     return { outcome: settled.outcome, orderId: settled.orderId };
   }
 
@@ -306,6 +351,18 @@ export class PaymentsService {
     if (!ACCEPTED_REFUND_STATUSES.has(refundStatus.toUpperCase())) throw refundFailed(code64(refundStatus || 'UNKNOWN'));
     await this.prisma.payment.update({ where: { id: payment.id }, data: { refundId: refund.id, refundedAt: new Date() }, select: { id: true } });
     return { refundId: refund.id };
+  }
+
+  /** The order `access` may open (its key, or the signed-in customer's own); 404 otherwise. */
+  private async findOrder(access: OrderAccess, orderId: string) {
+    const where = orderAccessWhere(access, orderId, this.secret());
+    const order = where && (await this.prisma.order.findFirst({ where, select: WEB_ORDER_SELECT }));
+    if (!order) throw orderNotFound();
+    return order;
+  }
+
+  private secret(): string {
+    return this.config.get('JWT_ACCESS_SECRET', { infer: true });
   }
 
   private requireGateway(): PaymentGateway {

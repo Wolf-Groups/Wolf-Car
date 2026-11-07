@@ -1,5 +1,5 @@
 import { authUser } from '../../test/unit/helpers';
-import { orderReadScope, orderReceiptScope, orderWriteScope } from './order-scope';
+import { canReadAllBranches, orderReadScope, orderReceiptScope, orderWriteScope } from './order-scope';
 
 const NOTHING = { id: { in: [] } };
 
@@ -30,5 +30,18 @@ describe('order scopes', () => {
   it('matches nothing for users without a branch or read permission', () => {
     expect(orderReadScope(authUser({ role: 'CASHIER', branchId: 'gh' }, []))).toEqual(NOTHING);
     expect(orderReadScope(authUser({ role: 'FINANCE', branchId: null }, ['order.read.branch']))).toEqual(NOTHING);
+  });
+
+  it("lets the call center (order.web.handle, no branch) read every order and change the website's only", () => {
+    const callCenter = authUser({ role: 'RESERVATIONS', branchId: null }, ['order.web.handle']);
+    expect(orderReadScope(callCenter)).toEqual({});
+    expect(orderReceiptScope(callCenter)).toEqual({});
+    expect(canReadAllBranches(callCenter)).toBe(true);
+    expect(orderWriteScope(callCenter)).toEqual({ source: 'WEB' });
+  });
+
+  it("adds the website's orders to a branch user's own branch when they hold order.web.handle", () => {
+    const cashier = authUser({ role: 'CASHIER', branchId: 'gh' }, ['order.read.branch', 'order.web.handle']);
+    expect(orderWriteScope(cashier)).toEqual({ OR: [{ branchId: 'gh' }, { source: 'WEB' }] });
   });
 });

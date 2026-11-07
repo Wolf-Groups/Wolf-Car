@@ -67,9 +67,13 @@ root `Dockerfile` + `.dockerignore`. Nothing else in app code.
   `wolfcar.qa` and `wolfcar.167-172-106-106.sslip.io` → `reverse_proxy 127.0.0.1:3000`, and
   `www.wolfcar.qa` → permanent redirect to `https://wolfcar.qa`. The friend adds
   their own block (their app on a different localhost port).
-- Firewall (`ufw`): allow 22, 80, 443 only. Containers publish on `127.0.0.1`
-  only, because Docker's published ports bypass `ufw`.
-- SSH: key-only login (already the case), `fail2ban` installed.
+- Firewall (`ufw`): allow 80 and 443 from the internet; 22 only on the
+  `tailscale0` interface (changed 2026-10-25 after Tap's security review found
+  public SSH; `deploy/harden-ssh.sh`). Containers publish on `127.0.0.1` only,
+  because Docker's published ports bypass `ufw`.
+- SSH: over Tailscale only, key-only login, `PermitRootLogin no`; admins sign in
+  as a normal user and `sudo`; GitHub deploys as the `deploy` user (docker
+  group) with a forced-command key. `fail2ban` installed.
 
 ### Deploying — `scripts/deploy.sh` (runs on the droplet)
 

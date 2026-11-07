@@ -20,6 +20,7 @@ export function makeUser(overrides: Partial<Profile> & { role?: RoleName; permis
     email: null,
     role: "BRANCH_MANAGER",
     branch: { id: "b-gh", code: "GH", name: "Al Gharrafa Branch", nameAr: "فرع الغرافة" },
+    branchHoldsWebOrders: false,
     twoFactorEnabled: false,
     hasShowroomPassword: true,
     permissions: [],

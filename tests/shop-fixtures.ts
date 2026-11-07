@@ -9,8 +9,11 @@ export const CART_KEY = "wolfcar.cart.v1";
 export const HINT_COOKIE = "wc_customer";
 
 export function customer(over: Partial<CustomerProfile> = {}): CustomerProfile {
-  return { phone: "+97455123456", name: "Sara Ali", email: "sara@example.com", ...over };
+  return { email: "sara@example.com", name: "Sara Ali", phone: "+97455123456", ...over };
 }
+
+/** The key the API hands out with a new order (any 32 base64url characters). */
+export const ORDER_KEY = "k".repeat(32);
 
 /** An unpaid web order of Dash Cam ×1 + Floor Mats ×1 (the API e2e's basket). */
 export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
@@ -19,11 +22,13 @@ export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
     code: "BO-000001",
     status: "PENDING",
     paymentStatus: "PENDING",
+    paymentMethod: "card",
     total: "619.50",
     currency: "QAR",
     createdAt: "2031-03-10T09:00:00.000Z",
     expiresAt: "2031-03-10T09:30:00.000Z",
     paidAt: null,
+    collectedAt: null,
     branch: { code: "BO", name: "Bin Omran Branch", nameAr: "فرع بن عمران" },
     customer: { name: "Sara Ali", email: "sara@example.com", phone: "+97455123456" },
     items: [
@@ -33,6 +38,11 @@ export function webOrder(over: Partial<WebOrder> = {}): WebOrder {
     lastPayment: null,
     ...over,
   };
+}
+
+/** Placed to pay at the branch: nothing online, no expiry, waiting for the branch to call. */
+export function branchOrder(over: Partial<WebOrder> = {}): WebOrder {
+  return webOrder({ paymentStatus: "NONE", paymentMethod: "branch", expiresAt: null, ...over });
 }
 
 export function paidOrder(over: Partial<WebOrder> = {}): WebOrder {
@@ -80,7 +90,16 @@ export function recordShopCalls(calls: ShopCall[]) {
  * was rendered with, answers tokenize() with `token` (or an error) on the
  * next microtask, and calls onReady once rendered, as the real SDK does.
  */
-export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0010", brand: "VISA" } }, fail }: { token?: TapToken; fail?: string } = {}) {
+export function stubCardSdk({
+  token = { id: "tok_fake_ok", card: { last_four: "0010", brand: "VISA" } },
+  fail,
+  wipeAfterToken = true,
+}: {
+  token?: TapToken;
+  fail?: string;
+  /** Tap's SDK 1.0.2 empties its form right after issuing a token and reports it invalid (seen in the sandbox) */
+  wipeAfterToken?: boolean;
+} = {}) {
   const state: { config: Record<string, unknown> | null } = { config: null };
   const unmount = vi.fn();
   const call = (name: "onReady" | "onSuccess" | "onError" | "onValidInput" | "onInvalidInput", arg?: unknown) => {
@@ -88,14 +107,25 @@ export function stubCardSdk({ token = { id: "tok_fake_ok", card: { last_four: "0
     if (typeof fn === "function") (fn as (value?: unknown) => void)(arg);
   };
   const sdk: CardSdk = {
-    renderTapCard: vi.fn((_containerId: string, config: Record<string, unknown>) => {
+    renderTapCard: vi.fn((containerId: string, config: Record<string, unknown>) => {
       state.config = config;
+      // Tap's own frame, with its English title (the page renames it once the form is ready)
+      document.getElementById(containerId)?.insertAdjacentHTML("beforeend", '<iframe id="tap-card-iframe" title="Secure payment input"></iframe>');
       queueMicrotask(() => call("onReady"));
       return { unmount };
     }),
     tokenize: vi.fn(() => {
-      queueMicrotask(() => (fail ? call("onError", fail) : call("onSuccess", token)));
+      queueMicrotask(() => {
+        if (fail) return call("onError", fail);
+        call("onSuccess", token);
+        if (wipeAfterToken) {
+          call("onValidInput", false);
+          call("onInvalidInput", true);
+        }
+      });
     }),
+    updateTheme: vi.fn(),
+    resetCardInputs: vi.fn(),
   };
   window.CardSDK = sdk;
   return { sdk, unmount, state, call };

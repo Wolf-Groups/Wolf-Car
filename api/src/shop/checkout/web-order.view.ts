@@ -1,3 +1,4 @@
+import type { PaymentMethod } from '../../../../shared/shop';
 import { money } from '../../common/money';
 import type { OrderStatus, PaymentAttemptStatus, PaymentStatus, Prisma } from '../../generated/prisma/client';
 import { imageUrl } from '../../uploads/image-processing';
@@ -13,6 +14,7 @@ export const WEB_ORDER_SELECT = {
   createdAt: true,
   expiresAt: true,
   paidAt: true,
+  collectedAt: true,
   customerName: true,
   customerEmail: true,
   customerPhone: true,
@@ -32,12 +34,16 @@ export interface WebOrderView {
   code: string;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  /** "branch" for an order paid at the branch on collection (paymentStatus NONE) */
+  paymentMethod: PaymentMethod;
   /** "619.50" */
   total: string;
   currency: string;
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
+  /** when the branch handed the paid order over */
+  collectedAt: string | null;
   branch: { code: string; name: string; nameAr: string };
   customer: { name: string | null; email: string | null; phone: string };
   items: { productId: string; productName: string; unitPrice: string; quantity: number; lineTotal: string; thumbUrl: string }[];
@@ -51,11 +57,13 @@ export function webOrderView(row: WebOrderRow): WebOrderView {
     code: row.code,
     status: row.status,
     paymentStatus: row.paymentStatus,
+    paymentMethod: row.paymentStatus === 'NONE' ? 'branch' : 'card',
     total: money(row.total),
     currency: row.currency,
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt?.toISOString() ?? null,
     paidAt: row.paidAt?.toISOString() ?? null,
+    collectedAt: row.collectedAt?.toISOString() ?? null,
     branch: { code: row.branch.code, name: row.branch.name, nameAr: row.branch.nameAr },
     // a web order always carries the phone it was placed with
     customer: { name: row.customerName, email: row.customerEmail, phone: row.customerPhone ?? '' },

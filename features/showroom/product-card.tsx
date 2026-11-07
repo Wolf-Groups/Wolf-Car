@@ -15,8 +15,10 @@ import { ImageZoom } from "@/components/image-zoom";
 import { VariantPicker } from "@/components/variant-picker";
 import { ScanBarcode } from "./scan-barcode";
 
-/** Card grid column widths → which image the browser should pick (480px thumb vs 1200px). */
-export const PRODUCT_IMAGE_SIZES = "(min-width: 2000px) 20vw, (min-width: 1536px) 25vw, (min-width: 1024px) 33vw, (min-width: 560px) 50vw, 100vw";
+/** Card widths (kiosk GRID: half a phone, ~200–260px from a tablet up) → which image the browser should pick (480px thumb vs 1200px). */
+export const PRODUCT_IMAGE_SIZES = "(min-width: 640px) 260px, 50vw";
+/** The same where the cashier scans off the screen (kiosk SCAN_GRID): one card across up to a small tablet, ~340–480px from two across. */
+export const SCAN_IMAGE_SIZES = "(min-width: 768px) 480px, 100vw";
 
 export function ProductImage({ product, sizes, className }: { product: ShowroomProduct; sizes: string; className?: string }) {
   return (
@@ -45,6 +47,7 @@ export function ProductCard({
   title = product.name,
   picker,
   barcode,
+  imageSizes = PRODUCT_IMAGE_SIZES,
   quantity,
   onAdd,
 }: {
@@ -54,6 +57,7 @@ export function ProductCard({
   picker?: ReactNode;
   /** only at a branch whose cashier scans off the screen */
   barcode?: ReactNode;
+  imageSizes?: string;
   quantity: number;
   /** returns false when the cart limits stopped the add */
   onAdd: () => boolean;
@@ -94,7 +98,7 @@ export function ProductCard({
           open={zoomed}
           onOpenChange={setZoomed}
         >
-          <ProductImage product={product} sizes={PRODUCT_IMAGE_SIZES} className={cn("absolute inset-0 p-3", !available && "opacity-50")} />
+          <ProductImage product={product} sizes={imageSizes} className={cn("absolute inset-0 p-2 sm:p-3", !available && "opacity-50")} />
         </ImageZoom>
         {/* over the photo, so a product with colours is as tall as its neighbours */}
         {picker && <div className="absolute inset-x-2 bottom-2 flex justify-center">{picker}</div>}
@@ -104,7 +108,7 @@ export function ProductCard({
             initial={{ scale: 0.6, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={spring}
-            className="pointer-events-none absolute end-3 top-3 grid h-11 min-w-11 place-items-center rounded-full bg-accent px-2 text-lg font-extrabold text-white tabular-nums"
+            className="pointer-events-none absolute end-2 top-2 grid h-9 min-w-9 place-items-center rounded-full bg-accent px-2 text-base font-extrabold text-white tabular-nums sm:end-3 sm:top-3 sm:h-11 sm:min-w-11 sm:text-lg"
             data-testid="card-quantity"
           >
             <span aria-hidden="true">{quantity}</span>
@@ -112,15 +116,16 @@ export function ProductCard({
           </motion.span>
         )}
       </div>
-      <div className="flex flex-1 flex-col p-4">
-        <h3 dir="auto" className="min-h-[2.75em] text-start text-[17px] leading-snug font-bold">
+      <div className="flex flex-1 flex-col p-3 sm:p-4">
+        <h3 dir="auto" className="min-h-[2.75em] text-start text-[15px] leading-snug font-bold sm:text-[17px]">
           {/* two lines at most on the card; pressing the name opens the photo with the name in full */}
           <button type="button" onClick={() => setZoomed(true)} className="line-clamp-2 text-start">
             {title}
           </button>
         </h3>
+        {/* a phone card is half the screen wide: the name and price are what fit; the photo opens the rest */}
         {product.description && (
-          <p dir="auto" className="mt-1 line-clamp-3 text-start text-sm leading-relaxed text-ink-2">
+          <p dir="auto" className="mt-1 line-clamp-2 text-start text-sm leading-relaxed text-ink-2 max-sm:hidden">
             {product.description}
           </p>
         )}
@@ -128,17 +133,18 @@ export function ProductCard({
             from the order sheet. A branch that scans off this screen passes it in. */}
         {barcode && <div className="mt-3">{barcode}</div>}
         <div className="mt-auto pt-3">
-          <p className="text-[22px] leading-tight font-extrabold tabular-nums">
+          <p className="text-[18px] leading-tight font-extrabold tabular-nums sm:text-[22px]">
             <span dir="ltr">{formatMoney(product.price, locale)}</span>
           </p>
           {!available ? (
-            <p className="mt-3 flex min-h-[60px] w-full items-center justify-center rounded-[var(--radius-brand)] bg-sand px-4 text-[17px] font-bold text-muted">
+            <p className="mt-3 flex min-h-[52px] w-full items-center justify-center rounded-[var(--radius-brand)] bg-sand px-2 text-center text-[15px] font-bold text-muted sm:min-h-[60px] sm:px-4 sm:text-[17px]">
               {t("unavailable")}
             </p>
           ) : (
             <Button
               size="touch"
-              className="mt-3 w-full"
+              // a phone card is ~170px wide: a lower, tighter button still makes a big target
+              className="mt-3 min-h-[52px] w-full px-3 text-base sm:min-h-[60px] sm:px-6 sm:text-lg"
               aria-label={t("addNamed", { name: product.name })}
               onClick={() => {
                 if (onAdd()) setFlash((n) => n + 1);
@@ -186,6 +192,7 @@ export function ProductGroupCard({
       quantity={quantityOf(product.id)}
       onAdd={() => onAdd(product)}
       barcode={scan && product.barcode ? <ScanBarcode key={product.id} product={product} /> : undefined}
+      imageSizes={scan ? SCAN_IMAGE_SIZES : PRODUCT_IMAGE_SIZES}
       picker={
         group.variants.length > 1 ? (
           <VariantPicker variants={group.variants} selected={product.id} onSelect={setPicked} label={t("variant")} touch compact />

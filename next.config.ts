@@ -6,6 +6,15 @@ import createNextIntlPlugin from "next-intl/plugin";
 /** Where the Next.js server reaches the NestJS API (rewrites + server-side fetches). */
 const API_INTERNAL_URL = process.env.API_INTERNAL_URL ?? "http://localhost:4000";
 
+/**
+ * Every page, the landing page too: browsers keep to HTTPS once they have seen the site
+ * (the API's helmet already sends the same HSTS) and never guess a content type.
+ */
+const SITE_HEADERS = [
+  { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+];
+
 /** Security headers for the staff and showroom pages (the landing page keeps its own behaviour). */
 const APP_HEADERS = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -32,6 +41,8 @@ const LAN_HOSTS = Object.values(networkInterfaces())
 const nextConfig: NextConfig = {
   // Docker: .next/standalone holds server.js plus only the traced node_modules
   output: "standalone",
+  // no "X-Powered-By: Next.js": nothing tells a visitor what serves the site
+  poweredByHeader: false,
   // dev only: Next blocks HMR and dev assets for hostnames other than localhost
   allowedDevOrigins: LAN_HOSTS,
   // this app lives inside a non-git workspace folder; pin the root so Turbopack
@@ -50,6 +61,7 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      { source: "/:path*", headers: SITE_HEADERS },
       { source: "/:locale(ar|en)/login", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/dashboard/:path*", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/dashboard", headers: APP_HEADERS },
@@ -58,6 +70,9 @@ const nextConfig: NextConfig = {
       { source: "/:locale(ar|en)/slots", headers: APP_HEADERS },
       { source: "/:locale(ar|en)/checkout", headers: CHECKOUT_HEADERS },
       { source: "/:locale(ar|en)/checkout/:path*", headers: CHECKOUT_HEADERS },
+      // the customer's account and orders: private, never framed nor indexed
+      { source: "/:locale(ar|en)/account", headers: APP_HEADERS },
+      { source: "/:locale(ar|en)/account/:path*", headers: APP_HEADERS },
     ];
   },
 };

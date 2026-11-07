@@ -1,4 +1,4 @@
-import { corsOrigins, validateEnv } from './env';
+import { corsOrigins, notifyEmails, validateEnv } from './env';
 
 const base = {
   CORS_ORIGINS: 'http://localhost:3000, https://wolfcar.qa',
@@ -32,7 +32,11 @@ describe('validateEnv', () => {
   });
 
   it('splits the CORS allowlist', () => {
-    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS })).toEqual(['http://localhost:3000', 'https://wolfcar.qa']);
+    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS, NODE_ENV: 'development' })).toEqual(['http://localhost:3000', 'https://wolfcar.qa']);
+  });
+
+  it('keeps only https origins in production, so a leftover http://localhost entry cannot pass the preflight', () => {
+    expect(corsOrigins({ CORS_ORIGINS: base.CORS_ORIGINS, NODE_ENV: 'production' })).toEqual(['https://wolfcar.qa']);
   });
 
   describe('online checkout (Task 1 of the online-checkout plan adds these to Env)', () => {
@@ -41,9 +45,8 @@ describe('validateEnv', () => {
       PAYMENTS_PROVIDER: string;
       WEB_ORDERS_BRANCH_CODE: string;
       CHECKOUT_TTL_MINUTES: number;
-      SMS_PROVIDER: string;
       OTP_DEV_CODE_IN_RESPONSE: boolean;
-      OTP_PER_PHONE_PER_15_MIN: number;
+      OTP_PER_EMAIL_PER_15_MIN: number;
       CUSTOMER_SESSION_TTL_DAYS: number;
       ODOO_WEB_WAREHOUSE_ID?: number;
       ODOO_FALLBACK_PRODUCT_ID?: number;
@@ -61,9 +64,8 @@ describe('validateEnv', () => {
       expect(env.PAYMENTS_PROVIDER).toBe('tap');
       expect(env.WEB_ORDERS_BRANCH_CODE).toBe('BO');
       expect(env.CHECKOUT_TTL_MINUTES).toBe(30);
-      expect(env.SMS_PROVIDER).toBe('console');
       expect(env.OTP_DEV_CODE_IN_RESPONSE).toBe(false);
-      expect(env.OTP_PER_PHONE_PER_15_MIN).toBe(3);
+      expect(env.OTP_PER_EMAIL_PER_15_MIN).toBe(3);
       expect(env.CUSTOMER_SESSION_TTL_DAYS).toBe(30);
       expect(env.TAP_SECRET_KEY).toBeUndefined();
     });
@@ -130,7 +132,7 @@ describe('validateEnv', () => {
     });
 
     it.each([
-      ['an unknown SMS provider', { SMS_PROVIDER: 'twilio' }, 'SMS_PROVIDER'],
+      ['a code limit of zero', { OTP_PER_EMAIL_PER_15_MIN: '0' }, 'OTP_PER_EMAIL_PER_15_MIN'],
       ['a checkout TTL of zero', { CHECKOUT_TTL_MINUTES: '0' }, 'CHECKOUT_TTL_MINUTES'],
       ['a checkout TTL over a day', { CHECKOUT_TTL_MINUTES: '1441' }, 'CHECKOUT_TTL_MINUTES'],
       ['a website address without a scheme', { WEB_PUBLIC_URL: 'wolfcar.qa' }, 'WEB_PUBLIC_URL'],
@@ -163,6 +165,45 @@ describe('validateEnv', () => {
         ODOO_WRITE_LOGIN: 'sales@wolfcar.qa',
         ODOO_WRITE_API_KEY: 'write-key',
       });
+    });
+  });
+
+  describe('email (Brevo)', () => {
+    it('defaults to the console sender with the Wolf Car name and no staff alerts', () => {
+      const env = validateEnv(base);
+      expect(env.EMAIL_PROVIDER).toBe('console');
+      expect(env.EMAIL_FROM_NAME).toBe('Wolf Car');
+      expect(env.BREVO_API_KEY).toBeUndefined();
+      expect(env.EMAIL_FROM).toBeUndefined();
+      expect(env.SHOP_NOTIFY_EMAIL).toBeUndefined();
+    });
+
+    it('knows only the console and brevo senders', () => {
+      expect(() => validateEnv({ ...base, EMAIL_PROVIDER: 'smtp' })).toThrow('EMAIL_PROVIDER');
+    });
+
+    it.each([
+      ['the API key', { EMAIL_FROM: 'orders@wolfcar.qa' }, 'BREVO_API_KEY'],
+      ['the sender address', { BREVO_API_KEY: 'xkeysib-1' }, 'EMAIL_FROM'],
+    ])('refuses brevo without %s', (_label, patch, field) => {
+      expect(() => validateEnv({ ...base, EMAIL_PROVIDER: 'brevo', ...patch })).toThrow(field);
+    });
+
+    it('accepts brevo with a key and a sender address', () => {
+      const env = validateEnv({ ...base, EMAIL_PROVIDER: 'brevo', BREVO_API_KEY: 'xkeysib-1', EMAIL_FROM: 'orders@wolfcar.qa', SHOP_NOTIFY_EMAIL: 'a@wolfcar.qa, b@wolfcar.qa' });
+      expect(env).toMatchObject({ EMAIL_PROVIDER: 'brevo', BREVO_API_KEY: 'xkeysib-1', EMAIL_FROM: 'orders@wolfcar.qa' });
+      expect(notifyEmails(env)).toEqual(['a@wolfcar.qa', 'b@wolfcar.qa']);
+    });
+
+    it('rejects a sender that is not an email address', () => {
+      expect(() => validateEnv({ ...base, EMAIL_FROM: 'Wolf Car' })).toThrow('EMAIL_FROM');
+    });
+
+    it('treats empty email settings as unset', () => {
+      const env = validateEnv({ ...base, BREVO_API_KEY: '', EMAIL_FROM: '', SHOP_NOTIFY_EMAIL: '' });
+      expect(env.BREVO_API_KEY).toBeUndefined();
+      expect(env.EMAIL_FROM).toBeUndefined();
+      expect(notifyEmails(env)).toEqual([]);
     });
   });
 });

@@ -4,6 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import Image from "next/image";
 import type { WebOrder } from "@/lib/api/types";
 import { formatMoney } from "@/lib/format";
+import { hasArabic } from "@/lib/text";
 
 export type OrderLinesProps = Pick<WebOrder, "items" | "total" | "currency">;
 
@@ -20,8 +21,9 @@ export function OrderLines({ items, total }: OrderLinesProps) {
               <Image src={item.thumbUrl} alt="" fill sizes="56px" className="object-contain p-1" unoptimized />
             </div>
             <div className="min-w-0 flex-1">
-              <p dir="auto" className="line-clamp-2 text-start text-[14px] leading-snug font-bold">
-                {item.productName}
+              {/* the row follows the page; the name alone reads in its own script's direction ("G700" first in Arabic) */}
+              <p className="line-clamp-2 text-start text-[14px] leading-snug font-bold">
+                <bdi dir={hasArabic(item.productName) ? "rtl" : "ltr"}>{item.productName}</bdi>
               </p>
               <p className="mt-0.5 text-[13px] text-ink-2 tabular-nums">
                 <span dir="ltr">×{item.quantity}</span> · {formatMoney(item.unitPrice, locale)}
