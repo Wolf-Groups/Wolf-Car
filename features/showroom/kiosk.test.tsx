@@ -88,6 +88,8 @@ const panel = () => screen.getByTestId("cart-panel");
 
 beforeEach(() => {
   sessionStorage.clear();
+  // the card size this screen picked
+  localStorage.clear();
   // two sessions in memory: showroom calls must use the showroom one
   setAccessToken("dashboard", "dashboard-token");
   setAccessToken("showroom", "showroom-token");
@@ -267,11 +269,16 @@ describe("showroom kiosk", () => {
     expect(within(panel()).getByTestId("cart-total")).toHaveTextContent("QAR 8,999.00");
   });
 
-  it("opens a product's photo large when it is pressed, without adding it", async () => {
+  it("opens a product's photo large on a double tap (one tap opens nothing), without adding it", async () => {
     server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog())));
     const { user } = renderKiosk();
 
-    await user.click(await screen.findByRole("button", { name: "View Brake pads larger" }));
+    const photo = await screen.findByRole("button", { name: "View Brake pads larger" });
+    await user.click(photo);
+    await user.click(screen.getByRole("button", { name: "Brake pads" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.dblClick(photo);
     const dialog = screen.getByRole("dialog", { name: "Brake pads" });
     expect(within(dialog).getByRole("img", { name: "Brake pads" })).toHaveAttribute("src", BRAKES.imageUrl);
     expect(screen.queryByTestId("card-quantity")).not.toBeInTheDocument();
@@ -344,21 +351,50 @@ describe("showroom kiosk", () => {
     it("gives each card room for a whole barcode, where the other branches fit two across a phone", async () => {
       // a 13-digit code is 277px wide: on a ~200px card both ends are cut and nothing scans
       const grid = () => screen.getByRole("list", { name: "Showroom" });
+      const width = () => grid().closest("main")!.style.getPropertyValue("--card");
       // the photo's sizes hint follows the card width, so the browser picks the right rendition
       const photo = () => screen.getByRole("button", { name: "View Brake pads larger" }).querySelector("img");
       server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog())));
       const plain = renderKiosk();
       await screen.findByRole("heading", { name: "Brake pads" });
-      expect(grid()).toHaveClass("grid-cols-2", "sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]");
+      expect(grid()).toHaveClass("grid-cols-2", "sm:grid-cols-[repeat(auto-fill,minmax(var(--card),1fr))]");
+      expect(width()).toBe("200px");
       expect(photo()).toHaveAttribute("sizes", "(min-width: 640px) 260px, 50vw");
       plain.unmount();
 
       server.use(http.get("/api/showroom/products", () => HttpResponse.json(scanCatalog())));
       renderKiosk();
       await screen.findByRole("heading", { name: "Brake pads" });
-      expect(grid()).toHaveClass("grid-cols-1", "sm:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]");
+      expect(grid()).toHaveClass("grid-cols-1");
       expect(grid()).not.toHaveClass("grid-cols-2");
-      expect(photo()).toHaveAttribute("sizes", "(min-width: 768px) 480px, 100vw");
+      expect(width()).toBe("340px");
+      expect(photo()).toHaveAttribute("sizes", "(min-width: 640px) 442px, 100vw");
+    });
+
+    it("lets the screen make its cards smaller or larger, remembers it, and never below a whole barcode", async () => {
+      const width = () => screen.getByRole("list", { name: "Showroom" }).closest("main")!.style.getPropertyValue("--card");
+      server.use(http.get("/api/showroom/products", () => HttpResponse.json(catalog())));
+      const plain = renderKiosk();
+      await screen.findByRole("heading", { name: "Brake pads" });
+      await plain.user.click(screen.getByRole("button", { name: "Larger cards" }));
+      expect(width()).toBe("240px");
+      await plain.user.click(screen.getByRole("button", { name: "Smaller cards" }));
+      await plain.user.click(screen.getByRole("button", { name: "Smaller cards" }));
+      expect(width()).toBe("180px");
+      plain.unmount();
+
+      // the same screen after the next sign-in
+      const again = renderKiosk();
+      await screen.findByRole("heading", { name: "Brake pads" });
+      expect(width()).toBe("180px");
+      again.unmount();
+
+      // a scanning branch rounds it up to the narrowest card a barcode fits on
+      server.use(http.get("/api/showroom/products", () => HttpResponse.json(scanCatalog())));
+      renderKiosk();
+      await screen.findByRole("heading", { name: "Brake pads" });
+      expect(width()).toBe("340px");
+      expect(screen.getByRole("button", { name: "Smaller cards" })).toBeDisabled();
     });
   });
 

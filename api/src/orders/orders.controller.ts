@@ -32,8 +32,8 @@ export class OrdersController {
     return this.orders.get(user, id);
   }
 
-  /** Pending orders only (Super Admin may override). */
-  @RequirePermissions('order.update')
+  /** Pending orders only (Super Admin may override); the call center also a pay-at-branch web order until handed over. */
+  @RequireAnyPermission('order.update', 'order.web.handle')
   @Audit('order.update', { entity: 'Order', idParam: 'id' })
   @Patch(':id')
   update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateOrderDto) {

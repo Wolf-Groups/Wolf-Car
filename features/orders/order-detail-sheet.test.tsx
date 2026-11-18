@@ -344,22 +344,33 @@ describe("order detail: the call center (order.web.handle)", () => {
   const atBranch = (overrides: Partial<OrderDetail> = {}) =>
     webOrder({ status: "PENDING", paymentStatus: "NONE", paidAt: null, confirmedBy: null, confirmedAt: null, payment: null, odoo: null, ...overrides });
 
-  it("confirms or cancels a pay-at-branch order after calling the customer", async () => {
+  it("confirms, edits or cancels a pay-at-branch order after calling the customer", async () => {
     const order = atBranch();
     serve(order);
     const { sheet } = await openSheet(order, callCenter());
     expect(within(sheet).getByRole("link", { name: /5512\s?3456/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole("button", { name: "Confirm order" })).toBeInTheDocument();
-    expect(within(sheet).getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
-    expect(within(sheet).queryByRole("button", { name: "Edit order" })).not.toBeInTheDocument();
+    for (const name of ["Confirm order", "Edit order", "Cancel order"]) expect(within(sheet).getByRole("button", { name })).toBeInTheDocument();
   });
 
-  it("hands a confirmed one over, and downloads its receipt", async () => {
+  it("hands a confirmed one over, downloads its receipt, and can still edit or cancel it", async () => {
     const order = atBranch({ status: "CONFIRMED", confirmedBy: CASHIER_REF, confirmedAt: "2031-03-10T10:00:00.000Z" });
     serve(order);
     const { sheet } = await openSheet(order, callCenter());
-    expect(within(sheet).getByRole("button", { name: "Mark as collected" })).toBeInTheDocument();
+    for (const name of ["Mark as collected", "Edit order", "Cancel order"]) expect(within(sheet).getByRole("button", { name })).toBeInTheDocument();
     expect(within(sheet).getAllByRole("button", { name: /receipt/i }).length).toBeGreaterThan(0);
+  });
+
+  it("neither edits nor cancels one already handed over, nor edits a card order", async () => {
+    const collected = atBranch({ status: "CONFIRMED", confirmedBy: CASHIER_REF, confirmedAt: "2031-03-10T10:00:00.000Z", collectedAt: "2031-03-10T12:00:00.000Z" });
+    serve(collected);
+    const first = await openSheet(collected, callCenter());
+    for (const name of ["Edit order", "Cancel order"]) expect(within(first.sheet).queryByRole("button", { name })).not.toBeInTheDocument();
+    first.unmount();
+
+    const card = webOrder({ status: "CONFIRMED" });
+    serve(card);
+    const { sheet } = await openSheet(card, callCenter());
+    for (const name of ["Edit order", "Cancel order"]) expect(within(sheet).queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
   it("only looks at a showroom order", async () => {
