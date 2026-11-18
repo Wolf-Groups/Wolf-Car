@@ -477,12 +477,25 @@ describe('Showroom & orders (e2e)', () => {
       expect((await cc.cancel(toCancel.id)).body).toMatchObject({ status: 'CANCELLED', cancelledBy: { username: 'reservations' } });
       expect((await cc.collect(toConfirm.id)).body).toMatchObject({ collectedAt: expect.any(String) });
       expect((await cc.collect(paid.id)).status).toBe(200);
+      // after the customer's call: edits a confirmed pay-at-branch order, or cancels it
+      const toChange = await place('third@example.com');
+      expect((await cc.confirm(toChange.id)).status).toBe(200);
+      const edited = await t.http().patch(`/api/orders/${toChange.id}`).set(bearer(tok.callCenter)).send({ customerName: 'Khalid Saleh' });
+      expect(edited.status).toBe(200);
+      expect(edited.body).toMatchObject({ status: 'CONFIRMED', customerName: 'Khalid Saleh' });
+      expect((await cc.cancel(toChange.id)).body).toMatchObject({ status: 'CANCELLED', cancelledBy: { username: 'reservations' } });
+      // handed over: neither edited nor cancelled
+      expect((await t.http().patch(`/api/orders/${toConfirm.id}`).set(bearer(tok.callCenter)).send({ customerName: 'Khalid Ali' })).status).toBe(409);
+      expect((await cc.cancel(toConfirm.id)).status).toBe(409);
+      // a card order is never edited
+      expect((await t.http().patch(`/api/orders/${paid.id}`).set(bearer(tok.callCenter)).send({ customerName: 'Khalid Ali' })).body.code).toBe('WEB_ORDER_READONLY');
       // a paid card order is refunded by the Super Admin only
       const another = await paidWebOrder(t, sara, world);
       expect((await cc.cancel(another.id)).body.code).toBe('ORDER_NOT_PENDING');
 
       // the showroom's orders stay the branch's
-      for (const res of [await cc.confirm(showroomBo.id), await cc.cancel(showroomBo.id)]) expect(res.status).toBe(404);
+      const editShowroom = await t.http().patch(`/api/orders/${showroomBo.id}`).set(bearer(tok.callCenter)).send({ customerName: 'Khalid Ali' });
+      for (const res of [await cc.confirm(showroomBo.id), await cc.cancel(showroomBo.id), editShowroom]) expect(res.status).toBe(404);
       expect((await t.prisma.order.findUniqueOrThrow({ where: { id: showroomBo.id } })).status).toBe('PENDING');
 
       const log = await t.prisma.activityLog.findFirstOrThrow({ where: { action: 'order.confirm', entityId: toConfirm.id, outcome: 'SUCCESS' } });

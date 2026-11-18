@@ -181,14 +181,15 @@ function OrderDetailBody({ id }: { id: string }) {
   const web = o.source === "WEB";
   // ordered on the website to pay at the till: staff confirm it after calling, and the till rings it up
   const payAtBranch = web && o.paymentStatus === "NONE";
-  // gated by permission AND state; the Super Admin may override the "pending only" rule (the API allows it).
-  // A web order is never edited (its total is what the customer was told or charged), and a card order is never
-  // confirmed by staff (the payment confirms it).
-  const canEdit = !web && can("order.update") && (pending || isAdmin);
   // the call center (order.web.handle) confirms, cancels and hands over the website's orders, never a showroom's
   const handlesThis = web && can("order.web.handle");
+  // after the customer's call it also edits or cancels a pay-at-branch order, confirmed too, until it is handed over
+  const callChanges = payAtBranch && (handlesThis || isAdmin) && o.status !== "CANCELLED" && !o.collectedAt;
+  // gated by permission AND state; the Super Admin may override the "pending only" rule (the API allows it).
+  // A card order is never edited (its total is what the card was charged), nor confirmed by staff (the payment does).
+  const canEdit = web ? callChanges : can("order.update") && (pending || isAdmin);
   const canConfirm = (!web || payAtBranch) && (can("order.confirm") || handlesThis) && pending;
-  const canCancel = (can("order.cancel") || handlesThis) && (pending || (isAdmin && o.status === "CONFIRMED"));
+  const canCancel = ((can("order.cancel") || handlesThis) && (pending || (isAdmin && o.status === "CONFIRMED"))) || callChanges;
   // handing a web order over at the counter, once: paid by card, or confirmed to pay at the till
   const canCollect = web && (can("order.confirm") || handlesThis) && o.status === "CONFIRMED" && (o.paymentStatus === "PAID" || payAtBranch) && !o.collectedAt;
   // a refunded order is never sold in Odoo (its row fails with ORDER_REFUNDED), and one already there needs nothing
