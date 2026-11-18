@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Lock, ShoppingCart } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useDeferredValue, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BrandMark } from "@/components/app/brand";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
@@ -27,7 +27,7 @@ import { ALL_CATEGORIES, CategoryTabs, SERVICES_TAB } from "./category-tabs";
 import { CheckoutDialog } from "./checkout-dialog";
 import { type Filters, filterProducts, isFiltering, NO_FILTERS } from "./filter";
 import { newIdempotencyKey } from "./idempotency";
-import { KioskFilters, KioskSearch } from "./kiosk-toolbar";
+import { CardSizeControl, KioskFilters, KioskSearch, useCardWidth } from "./kiosk-toolbar";
 import { cn } from "@/lib/utils";
 import { isAvailable } from "@/lib/stock";
 import { groupVariants } from "@/lib/variants";
@@ -48,16 +48,16 @@ export interface ShowroomCatalog {
 export const SHOWROOM_PRODUCTS_KEY = ["showroom", "products"] as const;
 const HEADER_H = "76px";
 /**
- * Two cards across a phone; from a tablet up, as many ~200px cards as the width holds (six or seven beside
- * the basket on the showroom's big screen), so a car model's parts are seen at a glance.
+ * Two cards across a phone; from a tablet up, as many cards of --card (200px unless this screen picked
+ * another size, useCardWidth) as the width holds, so a car model's parts are seen at a glance.
  */
-const GRID = "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))] sm:gap-4 2xl:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]";
+const GRID = "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(var(--card),1fr))] sm:gap-4";
 /**
  * Where the cashier scans off the screen, each card holds a whole barcode (a 13-digit code is 277px; a cut end
- * does not scan): one card across a phone, from a tablet up cards of 340px or more, which leave 288px for the
+ * does not scan): one card across a phone, from a tablet up --card is 340px or more, which leaves 288px for the
  * bars inside the card's padding and the barcode button's.
  */
-const SCAN_GRID = "grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(340px,1fr))] sm:gap-4";
+const SCAN_GRID = "grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(var(--card),1fr))] sm:gap-4";
 /** Cards added each time the list nears its end; a car model can hold 150+ products. */
 const PAGE = 24;
 
@@ -173,6 +173,9 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
   const branch = catalog.data?.branch ?? user.branch;
   // the cashier scans barcodes off this screen: show them, and keep the basket out of the way
   const scan = catalog.data?.branch.scanFromScreen ?? false;
+  const cardWidth = useCardWidth(scan);
+  // a card is about 1.3 times its narrowest width once the row's spare room is shared out
+  const imageSizes = `(min-width: 640px) ${Math.round(cardWidth.width * 1.3)}px, ${scan ? "100vw" : "50vw"}`;
   const branchName = branch ? (locale === "ar" ? branch.nameAr : branch.name) : null;
 
   const changeFilters = (patch: Partial<Filters>) => {
@@ -272,7 +275,7 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
       {/* the basket docks beside the grid only on a wide landscape screen; an
           upright kiosk keeps its full width for the products */}
       <div className={cn(!scan && "lg:landscape:grid lg:landscape:grid-cols-[minmax(0,1fr)_360px] xl:landscape:grid-cols-[minmax(0,1fr)_400px]")}>
-        <main className={cn("min-w-0 px-4 pt-5 pb-36 lg:px-6", !scan && "lg:landscape:pb-8")}>
+        <main className={cn("min-w-0 px-4 pt-5 pb-36 lg:px-6", !scan && "lg:landscape:pb-8")} style={{ "--card": `${cardWidth.width}px` } as CSSProperties}>
           <h1 className="sr-only">{branchName ? `${t("title")} · ${branchName}` : t("title")}</h1>
           {catalog.isPending ? (
             <ProductGridSkeleton scan={scan} />
@@ -284,7 +287,12 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
             <>
               {/* the search stays in reach while the grid scrolls under it */}
               <div className="sticky z-20 -mx-4 -mt-3 bg-sand px-4 py-3 lg:-mx-6 lg:px-6" style={{ top: HEADER_H }}>
-                <KioskSearch value={filters.query} onChange={(value) => changeFilters({ query: value })} />
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1">
+                    <KioskSearch value={filters.query} onChange={(value) => changeFilters({ query: value })} />
+                  </div>
+                  <CardSizeControl smaller={cardWidth.smaller} larger={cardWidth.larger} />
+                </div>
               </div>
               <div className="grid gap-3">
                 <CategoryTabs
@@ -339,7 +347,7 @@ function Kiosk({ user, idleTimeoutMs }: { user: Profile; idleTimeoutMs: number }
                       <ul className={scan ? SCAN_GRID : GRID} aria-label={t("title")}>
                         {groups.slice(0, shown).map((group) => (
                           <li key={group.key} className="grid">
-                            <ProductGroupCard group={group} scan={scan} quantityOf={(id) => quantityOf(cart, id)} onAdd={handleAdd} />
+                            <ProductGroupCard group={group} scan={scan} imageSizes={imageSizes} quantityOf={(id) => quantityOf(cart, id)} onAdd={handleAdd} />
                           </li>
                         ))}
                       </ul>

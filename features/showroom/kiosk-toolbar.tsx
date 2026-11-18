@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, Search, X } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Search, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslations } from "next-intl";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import { type Filters, PRICE_RANGES, type Sort } from "./filter";
 
@@ -94,6 +94,61 @@ export function KioskFilters({ filters, onChange }: { filters: Filters; onChange
           </span>
         </Chip>
       ))}
+    </div>
+  );
+}
+
+/** The narrowest card width from a tablet up, in px: the screens differ, so each one picks its own. */
+const CARD_WIDTHS = [150, 180, 200, 240, 290, 340];
+/** Where the cashier scans off the screen a card never gets narrower than its barcode needs (kiosk SCAN_GRID). */
+const SCAN_CARD_WIDTHS = [340, 390, 440, 500];
+const DEFAULT_WIDTH = 200;
+/** Kept on this screen only: the big screen and a tablet in the same branch want different sizes. */
+const CARD_WIDTH_KEY = "wolfcar.showroom.cardWidth";
+
+const rememberedWidth = (): number | null => {
+  try {
+    const stored = Number(localStorage.getItem(CARD_WIDTH_KEY));
+    return stored > 0 ? stored : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The card width this screen uses, and a step smaller or larger; remembered across sign-ins. The grid is drawn
+ * in the browser only (after the screen has signed in), so storage is read while rendering.
+ */
+export function useCardWidth(scan: boolean) {
+  const widths = scan ? SCAN_CARD_WIDTHS : CARD_WIDTHS;
+  const [chosen, setChosen] = useState(rememberedWidth);
+  // the stored width, or the nearest one this branch allows
+  const want = chosen ?? (scan ? SCAN_CARD_WIDTHS[0] : DEFAULT_WIDTH);
+  const index = widths.reduce((best, w, i) => (Math.abs(w - want) < Math.abs(widths[best] - want) ? i : best), 0);
+  const step = (by: number) => {
+    const next = widths[Math.min(widths.length - 1, Math.max(0, index + by))];
+    setChosen(next);
+    try {
+      localStorage.setItem(CARD_WIDTH_KEY, String(next));
+    } catch {
+      /* storage blocked: kept until the page reloads */
+    }
+  };
+  return { width: widths[index], smaller: index > 0 ? () => step(-1) : null, larger: index < widths.length - 1 ? () => step(1) : null };
+}
+
+/** Smaller / larger cards, beside the search; from a tablet up (a phone keeps two cards across). */
+export function CardSizeControl({ smaller, larger }: { smaller: (() => void) | null; larger: (() => void) | null }) {
+  const t = useTranslations("Showroom");
+  const button = "grid size-[60px] shrink-0 touch-manipulation place-items-center rounded-[var(--radius-brand-lg)] border-[1.5px] border-line bg-surface text-ink transition-colors hover:border-accent disabled:opacity-40 disabled:hover:border-line";
+  return (
+    <div role="group" aria-label={t("cardSize")} className="flex gap-2 max-sm:hidden">
+      <button type="button" onClick={smaller ?? undefined} disabled={!smaller} aria-label={t("cardsSmaller")} className={button}>
+        <ZoomOut className="size-6" aria-hidden="true" strokeWidth={1.8} />
+      </button>
+      <button type="button" onClick={larger ?? undefined} disabled={!larger} aria-label={t("cardsLarger")} className={button}>
+        <ZoomIn className="size-6" aria-hidden="true" strokeWidth={1.8} />
+      </button>
     </div>
   );
 }

@@ -39,6 +39,8 @@ const NOT_ABANDONED_CHECKOUT = {
 
 const webOrderReadonly = () =>
   new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_READONLY', message: 'Web orders cannot be edited: the total is what the card was charged.' });
+/** The call center (and the Super Admin) work on the website's orders. */
+const handlesWeb = (user: AuthUser) => user.role === 'SUPER_ADMIN' || user.permissions.has('order.web.handle');
 const webOrderUnpaid = () =>
   new ConflictException({ statusCode: 409, error: 'Conflict', code: 'WEB_ORDER_UNPAID', message: 'A card web order is confirmed by its payment, not by staff.' });
 const orderNotCollectable = () =>
@@ -124,23 +126,30 @@ export class OrdersService {
    * Edits a pending order (customer name, quantities, removing lines). Unit
    * prices stay as snapshotted. Confirmed/cancelled orders are immutable —
    * except for the Super Admin, whose override is flagged in the audit log.
-   * Web orders are never edited (409 WEB_ORDER_READONLY), not even by the
-   * Super Admin: their total is what the card was charged.
+   * A web order is edited only by the call center (and the Super Admin), only
+   * when it is paid at the branch, and only until it is handed over, confirmed
+   * or not: the customer's call changes it. A card order is never edited
+   * (409 WEB_ORDER_READONLY): its total is what the card was charged.
    */
   async update(user: AuthUser, id: string, dto: UpdateOrderDto): Promise<OrderDetail> {
     if (dto.customerName === undefined && dto.items === undefined) {
       throw new BadRequestException({ statusCode: 400, error: 'Bad Request', code: 'NOTHING_TO_UPDATE', message: 'Nothing to update.' });
     }
     const before = await this.get(user, id, orderWriteScope(user));
-    if (before.source === 'WEB') throw webOrderReadonly();
-    const override = before.status !== 'PENDING';
-    if (override && user.role !== 'SUPER_ADMIN') throw new OrderLockedException(before.status);
+    const web = before.source === 'WEB';
+    if (web && (!handlesWeb(user) || before.paymentStatus !== 'NONE')) throw webOrderReadonly();
+    if (!web && !user.permissions.has('order.update') && user.role !== 'SUPER_ADMIN') throw new NotFoundException('Order not found.');
+    const editable = (status: string, collected: boolean) => (web ? status !== 'CANCELLED' && !collected : status === 'PENDING' || user.role === 'SUPER_ADMIN');
+    if (!editable(before.status, before.collectedAt !== null)) throw new OrderLockedException(before.status);
+    const override = !web && before.status !== 'PENDING';
 
     await this.prisma.$transaction(async (tx) => {
-      // lock the row and re-check the status inside the transaction (no confirm/edit race)
-      const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM orders WHERE id = ${id}::uuid FOR UPDATE`;
+      // lock the row and re-check it inside the transaction (no confirm/collect/edit race)
+      const [locked] = await tx.$queryRaw<{ status: string; collected_at: Date | null; payment_status: string }[]>`
+        SELECT status, collected_at, payment_status FROM orders WHERE id = ${id}::uuid FOR UPDATE`;
       if (!locked) throw new NotFoundException('Order not found.');
-      if (locked.status !== 'PENDING' && user.role !== 'SUPER_ADMIN') throw new OrderLockedException(locked.status);
+      if (web && locked.payment_status !== 'NONE') throw webOrderReadonly();
+      if (!editable(locked.status, Boolean(locked.collected_at))) throw new OrderLockedException(locked.status);
 
       const data: Prisma.OrderUpdateInput = {};
       if (dto.customerName !== undefined) data.customerName = dto.customerName;
@@ -177,7 +186,7 @@ export class OrdersService {
       .setEntity('Order', id)
       .setBranch(before.branch.id)
       .setChange(orderAuditView(before), orderAuditView(after))
-      .addMetadata(override ? { override: true, status: before.status } : {});
+      .addMetadata(override ? { override: true, status: before.status } : web && before.status !== 'PENDING' ? { status: before.status } : {});
     return after;
   }
 
@@ -203,12 +212,16 @@ export class OrdersService {
    * REFUNDED even when the cancel itself does not go through.
    */
   async cancel(user: AuthUser, id: string): Promise<OrderDetail> {
-    const from: ('PENDING' | 'CONFIRMED')[] = user.role === 'SUPER_ADMIN' ? ['PENDING', 'CONFIRMED'] : ['PENDING'];
     const order = await this.findWritable(user, id);
-    if (!(from as OrderStatus[]).includes(order.status)) throw new OrderLockedException(order.status);
+    // the call center also cancels a confirmed pay-at-branch web order (the customer called it off), until it is handed over
+    const callCenter = order.source === 'WEB' && order.paymentStatus === 'NONE' && user.permissions.has('order.web.handle');
+    const from: ('PENDING' | 'CONFIRMED')[] = user.role === 'SUPER_ADMIN' || callCenter ? ['PENDING', 'CONFIRMED'] : ['PENDING'];
+    if (!(from as OrderStatus[]).includes(order.status) || (callCenter && order.collectedAt)) throw new OrderLockedException(order.status);
 
     const data: Prisma.OrderUncheckedUpdateManyInput = { cancelledById: user.id, cancelledAt: new Date() };
-    const unchanged: Prisma.OrderWhereInput = { paymentStatus: order.paymentStatus };
+    const unchanged: Prisma.OrderWhereInput = callCenter && user.role !== 'SUPER_ADMIN'
+      ? { paymentStatus: order.paymentStatus, collectedAt: null }
+      : { paymentStatus: order.paymentStatus };
     if (order.source !== 'WEB') return this.transition(user, id, 'CANCELLED', data, from, unchanged);
 
     if (await this.payingAttempt(id, 'unrefunded')) {
@@ -258,10 +271,10 @@ export class OrdersService {
   private async findWritable(
     user: AuthUser,
     id: string,
-  ): Promise<{ status: OrderStatus; source: OrderSource; paymentStatus: PaymentStatus; branchId: string }> {
+  ): Promise<{ status: OrderStatus; source: OrderSource; paymentStatus: PaymentStatus; branchId: string; collectedAt: Date | null }> {
     const row = await this.prisma.order.findFirst({
       where: { AND: [{ id }, orderWriteScope(user)] },
-      select: { status: true, source: true, paymentStatus: true, branchId: true },
+      select: { status: true, source: true, paymentStatus: true, branchId: true, collectedAt: true },
     });
     if (!row) throw new NotFoundException('Order not found.');
     return row;

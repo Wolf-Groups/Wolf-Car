@@ -11,7 +11,7 @@ import { fast, spring } from "@/lib/motion";
 import { isAvailable } from "@/lib/stock";
 import { cn } from "@/lib/utils";
 import type { ProductGroup } from "@/lib/variants";
-import { ImageZoom } from "@/components/image-zoom";
+import { ImageZoom, useDoubleTap } from "@/components/image-zoom";
 import { VariantPicker } from "@/components/variant-picker";
 import { ScanBarcode } from "./scan-barcode";
 
@@ -67,6 +67,7 @@ export function ProductCard({
   const locale = useLocale();
   const [flash, setFlash] = useState(0);
   const [zoomed, setZoomed] = useState(false);
+  const openOnDoubleTap = useDoubleTap(() => setZoomed(true));
 
   useEffect(() => {
     if (!flash) return;
@@ -95,6 +96,7 @@ export function ProductCard({
           closeLabel={tc("close")}
           className="absolute inset-0 size-full"
           showName
+          doubleTap
           open={zoomed}
           onOpenChange={setZoomed}
         >
@@ -118,8 +120,8 @@ export function ProductCard({
       </div>
       <div className="flex flex-1 flex-col p-3 sm:p-4">
         <h3 dir="auto" className="min-h-[2.75em] text-start text-[15px] leading-snug font-bold sm:text-[17px]">
-          {/* two lines at most on the card; pressing the name opens the photo with the name in full */}
-          <button type="button" onClick={() => setZoomed(true)} className="line-clamp-2 text-start">
+          {/* two lines at most on the card; a double tap on the name opens the photo with the name in full */}
+          <button type="button" onClick={openOnDoubleTap} className="line-clamp-2 touch-manipulation text-start">
             {title}
           </button>
         </h3>
@@ -172,12 +174,15 @@ export function ProductCard({
 export function ProductGroupCard({
   group,
   scan = false,
+  imageSizes,
   quantityOf,
   onAdd,
 }: {
   group: ProductGroup<ShowroomProduct>;
   /** show the picked product's barcode for scanning off the screen */
   scan?: boolean;
+  /** the photo's sizes hint for the card width this screen picked */
+  imageSizes?: string;
   quantityOf: (productId: string) => number;
   /** returns false when the cart limits stopped the add */
   onAdd: (product: ShowroomProduct) => boolean;
@@ -192,7 +197,7 @@ export function ProductGroupCard({
       quantity={quantityOf(product.id)}
       onAdd={() => onAdd(product)}
       barcode={scan && product.barcode ? <ScanBarcode key={product.id} product={product} /> : undefined}
-      imageSizes={scan ? SCAN_IMAGE_SIZES : PRODUCT_IMAGE_SIZES}
+      imageSizes={imageSizes ?? (scan ? SCAN_IMAGE_SIZES : PRODUCT_IMAGE_SIZES)}
       picker={
         group.variants.length > 1 ? (
           <VariantPicker variants={group.variants} selected={product.id} onSelect={setPicked} label={t("variant")} touch compact />

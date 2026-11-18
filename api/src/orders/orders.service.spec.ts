@@ -382,6 +382,60 @@ describe('OrdersService', () => {
       await conflict(service.update(boCashier, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
     });
 
+    describe('the call center', () => {
+      const callCenter = authUser({ id: 'u-cc', username: 'cc', role: 'RESERVATIONS', branchId: null }, ['order.web.handle']);
+      const atBranch = (over: Record<string, unknown> = {}) => webOrderRow({ paymentStatus: 'NONE', paidAt: null, payments: [], ...over });
+
+      it('edits a pay-at-branch order, pending or confirmed, and the audit says it was confirmed', async () => {
+        for (const status of ['PENDING', 'CONFIRMED'] as const) {
+          jest.clearAllMocks();
+          prisma.order.findFirst.mockResolvedValue(atBranch({ status }) as never);
+          prisma.$queryRaw.mockResolvedValue([{ status, collected_at: null, payment_status: 'NONE' }] as never);
+          await service.update(callCenter, 'o-1', { items: [{ productId: 'p1', quantity: 1 }] });
+          expect((prisma.order.update.mock.calls[0][0].data as { total: Prisma.Decimal }).total.toFixed(2)).toBe('100.00');
+          expect(trail.addMetadata).toHaveBeenCalledWith(status === 'CONFIRMED' ? { status: 'CONFIRMED' } : {});
+        }
+      });
+
+      it('never edits a card order, a handed-over order or a cancelled one', async () => {
+        prisma.order.findFirst.mockResolvedValue(atBranch({ paymentStatus: 'PAID' }) as never);
+        await conflict(service.update(callCenter, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
+        prisma.order.findFirst.mockResolvedValue(atBranch({ collectedAt: new Date() }) as never);
+        await expect(service.update(callCenter, 'o-1', { customerName: 'X' })).rejects.toBeInstanceOf(OrderLockedException);
+        prisma.order.findFirst.mockResolvedValue(atBranch({ status: 'CANCELLED' }) as never);
+        await expect(service.update(callCenter, 'o-1', { customerName: 'X' })).rejects.toBeInstanceOf(OrderLockedException);
+        expect(prisma.order.update).not.toHaveBeenCalled();
+      });
+
+      it('re-checks under the row lock: handed over or paid in the meantime is refused', async () => {
+        prisma.order.findFirst.mockResolvedValue(atBranch() as never);
+        prisma.$queryRaw.mockResolvedValue([{ status: 'CONFIRMED', collected_at: new Date(), payment_status: 'NONE' }] as never);
+        await expect(service.update(callCenter, 'o-1', { customerName: 'X' })).rejects.toBeInstanceOf(OrderLockedException);
+        prisma.$queryRaw.mockResolvedValue([{ status: 'CONFIRMED', collected_at: null, payment_status: 'PAID' }] as never);
+        await conflict(service.update(callCenter, 'o-1', { customerName: 'X' }), 'WEB_ORDER_READONLY');
+        expect(prisma.order.update).not.toHaveBeenCalled();
+      });
+
+      it('cancels a confirmed pay-at-branch order with one conditional update that also requires it not handed over', async () => {
+        prisma.order.findFirst.mockResolvedValueOnce(atBranch() as never).mockResolvedValue(atBranch({ status: 'CANCELLED' }) as never);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+        await service.cancel(callCenter, 'o-1');
+        expect(prisma.order.updateMany.mock.calls[0][0].where).toEqual({
+          AND: [{ id: 'o-1' }, { source: 'WEB' }, { status: { in: ['PENDING', 'CONFIRMED'] } }, { paymentStatus: 'NONE', collectedAt: null }],
+        });
+        expect(payments.refundForCancel).not.toHaveBeenCalled();
+      });
+
+      it('does not cancel a handed-over order, nor a confirmed card order (that would refund the card)', async () => {
+        prisma.order.findFirst.mockResolvedValue(atBranch({ collectedAt: new Date() }) as never);
+        await expect(service.cancel(callCenter, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+        prisma.order.findFirst.mockResolvedValue(webOrderRow() as never);
+        await expect(service.cancel(callCenter, 'o-1')).rejects.toBeInstanceOf(OrderLockedException);
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+        expect(payments.refundForCancel).not.toHaveBeenCalled();
+      });
+    });
+
     it('a pay-at-branch order (paymentStatus NONE) is confirmed by staff after calling the customer', async () => {
       prisma.order.findFirst.mockResolvedValue(webOrderRow({ status: 'PENDING', paymentStatus: 'NONE', payments: [] }) as never);
       prisma.order.updateMany.mockResolvedValue({ count: 1 });

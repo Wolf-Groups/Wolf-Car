@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { type MouseEvent, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
  * allows (catalogue photos are cut-outs on white, some only ~200 px wide).
  * With `showName` the full name is written under the photo, for cards that
  * cut a long name short; `open` lets something else (the name) open it too.
+ * With `doubleTap` it opens on a second tap only (the showroom screen, where a
+ * customer scrolling the cards would otherwise open photos by accident).
  */
 export function ImageZoom({
   src,
@@ -19,6 +21,7 @@ export function ImageZoom({
   closeLabel,
   className,
   showName = false,
+  doubleTap = false,
   open: openProp,
   onOpenChange,
   children,
@@ -31,6 +34,7 @@ export function ImageZoom({
   closeLabel: string;
   className?: string;
   showName?: boolean;
+  doubleTap?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   children: ReactNode;
@@ -41,10 +45,17 @@ export function ImageZoom({
     setOwn(next);
     onOpenChange?.(next);
   };
+  const onTap = useDoubleTap(() => setOpen(true));
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} aria-label={viewLabel} className={cn("block cursor-zoom-in", className)}>
+      <button
+        type="button"
+        onClick={doubleTap ? onTap : () => setOpen(true)}
+        aria-label={viewLabel}
+        // touch-manipulation: the browser's own double-tap zoom stays out of the way
+        className={cn("block cursor-zoom-in", doubleTap && "touch-manipulation", className)}
+      >
         {children}
       </button>
 
@@ -70,4 +81,23 @@ export function ImageZoom({
       </Dialog>
     </>
   );
+}
+
+/** Two taps within this many milliseconds are a double tap. */
+const DOUBLE_TAP_MS = 400;
+
+/**
+ * A click handler that runs `action` on the second of two quick taps. A click
+ * from the keyboard (Enter, Space: `detail` 0) runs it at once.
+ */
+export function useDoubleTap(action: () => void) {
+  const last = useRef(-Infinity);
+  return (e: MouseEvent) => {
+    if (e.detail === 0 || e.timeStamp - last.current < DOUBLE_TAP_MS) {
+      last.current = -Infinity;
+      action();
+    } else {
+      last.current = e.timeStamp;
+    }
+  };
 }
